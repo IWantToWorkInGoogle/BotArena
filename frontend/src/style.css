@@ -48,3 +48,20 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 .health meter::-webkit-meter-optimum-value { background: currentColor; border-radius: .3rem; }
 .health meter::-moz-meter-bar { background: currentColor; }
 @media (max-width: 800px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.error-card {
+  margin: 0;
+  padding: .7rem .8rem;
+  border: 1px solid #76453d;
+  border-left: .25rem solid #ff9a84;
+  border-radius: .45rem;
+  background: #2c1e27;
+  color: #ffe0d7;
+  font-size: .9rem;
+  overflow-wrap: anywhere;
+}
+.error-heading { display: flex; align-items: baseline; gap: .45rem 1rem; flex-wrap: wrap; margin-bottom: .35rem; }
+.error-heading span, .error-details dt { color: #e8b4a7; font-size: .8rem; }
+.error-details { display: flex; flex-wrap: wrap; gap: .35rem; margin: .55rem 0 0; }
+.error-details:empty { display: none; }
+.error-details div { display: flex; gap: .35rem; padding: .15rem .4rem; border-radius: .3rem; background: #493037; }
+.error-details dd { margin: 0; font: .8rem ui-monospace, monospace; }

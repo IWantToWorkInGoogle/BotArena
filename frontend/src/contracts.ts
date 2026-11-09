@@ -29,13 +29,21 @@ export interface Replay {
   result: { winnerBotId: Bot['id'] | null; reason: 'BotDestroyed' | 'TimeLimit' | 'BotError'; durationTicks: number };
   frames: Frame[];
 }
+export interface ScriptError {
+  botId: Bot['id'];
+  tick: number | null;
+  message: string;
+  line?: number | null;
+  column?: number | null;
+}
+
 export interface MatchResponse {
   replay: Replay;
-  error: { botId: Bot['id']; tick: number | null; message: string } | null;
+  error: ScriptError | null;
 }
 export interface Opponent { id: string; name: string; description: string }
 
 export type MatchJobStatus =
   | { state: 'queued'; position: number }
   | { state: 'running' }
-  | { state: 'completed'; match: MatchResponse | null; error: string | null };
+  | { state: 'completed'; match: MatchResponse | null; error: string | null; diagnostic?: ScriptError | null };

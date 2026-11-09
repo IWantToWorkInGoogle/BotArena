@@ -1,5 +1,11 @@
-import type { MatchJobStatus, MatchResponse } from './contracts';
+import type { MatchJobStatus, MatchResponse, ScriptError } from './contracts';
 import { text } from './text';
+
+export class MatchDiagnosticError extends Error {
+  constructor(readonly diagnostic: ScriptError) {
+    super(diagnostic.message);
+  }
+}
 
 export async function runMatch(
   botCode: string,
@@ -33,6 +39,7 @@ export async function runMatch(
     if (!update.ok) throw new Error(update.status === 404 ? text.jobMissing : text.serverError(update.status));
     const status: MatchJobStatus = await update.json();
     if (status.state === 'completed') {
+      if (status.diagnostic) throw new MatchDiagnosticError(status.diagnostic);
       if (!status.match) throw new Error(status.error ?? text.matchError);
       return status.match;
     }

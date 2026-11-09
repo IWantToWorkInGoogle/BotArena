@@ -11,13 +11,17 @@ public interface IBotRuntime : IDisposable
     BotAction Decide(BotObservation observation);
 }
 
-public sealed class StrategyException(string message, int? tick = null) : Exception(message)
+public sealed class StrategyException(string message, int? tick = null, int? line = null, int? column = null) : Exception(message)
 {
     public int? Tick { get; } = tick;
+    public int? Line { get; } = line;
+    public int? Column { get; } = column;
 }
 
 public sealed class JavaScriptBot : IBotRuntime
 {
+    private const string StrategySource = "strategy.js";
+
     private readonly Engine engine = new(options =>
     {
         options.Strict();
@@ -61,7 +65,7 @@ public sealed class JavaScriptBot : IBotRuntime
                     });
                 })(JSON.parse, JSON.stringify, Number.isFinite, Array.isArray, Math.min, Math.max)
                 """);
-            engine.Execute(source, "strategy.js");
+            engine.Execute(source, StrategySource);
             tick = engine.Evaluate("typeof tick === 'function' ? tick : null");
             if (tick.IsNull()) throw new StrategyException("Объявите функцию tick(state).");
         }
@@ -69,7 +73,7 @@ public sealed class JavaScriptBot : IBotRuntime
         {
             engine.Dispose();
             if (!IsScriptError(error)) throw;
-            throw new StrategyException(Describe(error, "при загрузке стратегии"));
+            throw Describe(error, "при загрузке стратегии");
         }
     }
 
@@ -88,7 +92,7 @@ public sealed class JavaScriptBot : IBotRuntime
         }
         catch (Exception error) when (IsScriptError(error))
         {
-            throw new StrategyException(Describe(error, "при вызове tick(state)"), observation.Tick);
+            throw Describe(error, "при вызове tick(state)", observation.Tick);
         }
     }
 
@@ -97,16 +101,23 @@ public sealed class JavaScriptBot : IBotRuntime
             or StatementsCountOverflowException or MemoryLimitExceededException or RecursionDepthOverflowException
             or Acornima.ParseErrorException;
 
-    private static string Describe(Exception error, string phase)
+    private static StrategyException Describe(Exception error, string phase, int? tick = null)
     {
         if (error is JavaScriptException scriptError)
         {
-            var location = scriptError.Location.Start;
-            return $"Ошибка JavaScript {phase}, строка {location.Line}, столбец {location.Column + 1}.";
+            var message = $"Ошибка JavaScript {phase}";
+            var location = scriptError.Location;
+            if (location.SourceFile == StrategySource && location.Start.Line > 0)
+            {
+                var line = location.Start.Line;
+                var column = location.Start.Column + 1;
+                return new($"{message}, строка {line}, столбец {column}.", tick, line, column);
+            }
+            return new($"{message}.", tick);
         }
         if (error is Acornima.ParseErrorException)
-            return $"Синтаксическая ошибка {phase}.";
-        return $"Превышен лимит исполнения {phase}.";
+            return new($"Синтаксическая ошибка {phase}.", tick);
+        return new($"Превышен лимит исполнения {phase}.", tick);
     }
 
     public void Dispose() => engine.Dispose();

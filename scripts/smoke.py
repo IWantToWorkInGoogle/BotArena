@@ -79,6 +79,12 @@ def main():
             "winnerBotId": "opponent", "reason": "BotError", "durationTicks": failed_tick
         }
 
+    status, match = run('function tick() {\n  throw Error("test");\n}')
+    assert status == 200 and match["error"]["line"] == 2 and match["error"]["column"] > 0
+    status, match = run("function tick() { const {proxy, revoke} = Proxy.revocable({}, {}); revoke(); return proxy; }")
+    assert status == 200 and match["error"]["line"] is None and match["error"]["column"] is None
+    assert "строка" not in match["error"]["message"]
+
     print("HTTP smoke checks passed")
 
 

@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace BotArena;
 
-internal record MatchWorkerResult(MatchResponse? Response, string? Error);
+internal record MatchWorkerResult(MatchResponse? Response, string? Error, ScriptError? Diagnostic = null);
 
 internal static class MatchWorker
 {
@@ -23,7 +23,7 @@ internal static class MatchWorker
         }
         catch (StrategyException error)
         {
-            result = new(null, error.Message);
+            result = new(null, error.Message, new("player", error.Tick, error.Message, error.Line, error.Column));
         }
         await JsonSerializer.SerializeAsync(Console.OpenStandardOutput(), result, Json);
         return 0;

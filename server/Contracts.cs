@@ -35,6 +35,6 @@ public enum MatchEndReason { BotDestroyed, TimeLimit, BotError }
 public record MatchResult(string? WinnerBotId, MatchEndReason Reason, int DurationTicks);
 public record MatchReplay(int TickRate, ArenaState Arena, IReadOnlyList<GameFrame> Frames, MatchResult Result);
 public record MatchRequest(string? BotCode, string? OpponentId);
-public record ScriptError(string BotId, int? Tick, string Message);
+public record ScriptError(string BotId, int? Tick, string Message, int? Line = null, int? Column = null);
 public record MatchResponse(MatchReplay Replay, ScriptError? Error = null);
 public record Opponent(string Id, string Name, string Description);

@@ -82,7 +82,7 @@ public static class Match
             catch (StrategyException failure)
             {
                 duel.Forfeit(decidingBot);
-                error = new(decidingBot, failure.Tick, failure.Message);
+                error = new(decidingBot, failure.Tick, failure.Message, failure.Line, failure.Column);
                 // The failed decision never advances the world. Record the finish on its current tick.
                 frames[^1] = duel.CaptureFrame();
                 break;

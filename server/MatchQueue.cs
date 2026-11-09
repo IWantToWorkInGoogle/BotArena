@@ -1,7 +1,7 @@
 namespace BotArena;
 
 internal sealed record MatchJobStatus(
-    string State, int? Position = null, MatchResponse? Match = null, string? Error = null);
+    string State, int? Position = null, MatchResponse? Match = null, string? Error = null, ScriptError? Diagnostic = null);
 
 internal sealed class MatchJob(MatchRequest request, CancellationToken cancellation)
 {
@@ -62,7 +62,7 @@ internal sealed class MatchQueue(ILogger<MatchQueue> logger) : BackgroundService
             }
 
             return results.TryGetValue(id, out var result)
-                ? new("completed", Match: result.Response, Error: result.Error)
+                ? new("completed", Match: result.Response, Error: result.Error, Diagnostic: result.Diagnostic)
                 : null;
         }
     }

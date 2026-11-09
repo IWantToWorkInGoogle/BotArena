@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { Arena, Bot, Frame, Point, Replay } from './contracts';
 import { text } from './text';
 
@@ -18,9 +18,15 @@ function angleBetween(start: number, end: number, fraction: number): number {
 function ArenaView({ arena, frame, next, fraction, finished, winner }: {
   arena: Arena; frame: Frame; next: Frame; fraction: number; finished: boolean; winner: Bot['id'] | null;
 }) {
+  const haloId = useId();
   return (
     <svg className="arena" viewBox={`0 0 ${arena.width} ${arena.height}`} role="img" aria-label={copy.imageLabel}>
       <defs>
+        {winner && <radialGradient id={haloId}>
+          <stop offset="0%" stopColor={colors[winner]} stopOpacity=".65" />
+          <stop offset="65%" stopColor={colors[winner]} stopOpacity=".3" />
+          <stop offset="100%" stopColor={colors[winner]} stopOpacity="0" />
+        </radialGradient>}
         <pattern id="grid" width="1" height="1" patternUnits="userSpaceOnUse">
           <path d="M 1 0 H 0 V 1" fill="none" stroke="#253b51" strokeWidth=".04" />
         </pattern>
@@ -52,9 +58,8 @@ function ArenaView({ arena, frame, next, fraction, finished, winner }: {
         return (
           <g key={bot.id} transform={`translate(${x} ${y})`} opacity={faded ? 0.35 : 1}
             className={won ? 'winning-bot' : undefined} style={{ color }}>
+            {won && <ellipse cx="0" cy=".12" rx=".91" ry=".7" fill={`url(#${haloId})`} />}
             <g transform={`rotate(${hull})`}>
-              {won && <rect x="-.45" y="-.4" width=".9" height=".8" rx=".08" fill="none"
-                stroke={color} strokeWidth=".045" />}
               <rect x="-.34" y="-.29" width=".68" height=".58" rx=".04" fill="#111c2c" stroke={color} strokeWidth=".045" />
               <path d="M -.29 -.2 H .29 M -.29 .2 H .29" stroke={color} strokeWidth=".045" />
             </g>

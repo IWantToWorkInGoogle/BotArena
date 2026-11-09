@@ -23,8 +23,14 @@ export const text = {
   jobMissing: 'Расчёт больше недоступен. Запустите матч заново.',
   serverError: (status: number) => `Ошибка сервера (${status}).`,
   matchError: 'Не удалось рассчитать матч.',
-  scriptError: (bot: string, message: string, tick: number | null) =>
-    `${bot}. ${message}${tick === null ? '' : ` Тик ${tick}.`}`,
+  diagnostic: {
+    title: 'Ошибка стратегии',
+    javascriptTick: 'JavaScript прервал выполнение tick(state).',
+    javascriptLoad: 'Не удалось загрузить код стратегии.',
+    line: 'Строка',
+    column: 'Столбец',
+    tick: 'Тик',
+  },
   replay: {
     imageLabel: 'Арена матча',
     player: 'Ваш бот',
