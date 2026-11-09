@@ -28,7 +28,7 @@ def check_replay(replay):
     frames = replay["frames"]
     assert replay["tickRate"] == 20
     assert [frame["tick"] for frame in frames] == list(range(len(frames)))
-    assert replay["result"]["durationTicks"] == len(frames) - 1 <= 600
+    assert replay["result"]["durationTicks"] == len(frames) - 1 <= 200
     assert frames[-1]["events"][-1]["type"] == "MatchFinished"
     assert all(len(frame["bots"]) == 2 for frame in frames)
 

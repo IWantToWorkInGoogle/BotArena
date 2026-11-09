@@ -37,6 +37,7 @@ function tick({ self, enemy }) {
 
 ```sh
 dotnet build server
+dotnet test tests
 npm --prefix frontend run build
 # При запущенном сервере
 python3 scripts/smoke.py

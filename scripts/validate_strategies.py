@@ -90,10 +90,12 @@ def check_movement():
     for tick, (before, after) in enumerate(zip(states, states[1:])):
         turn = after["bodyAngle"] - before["bodyAngle"]
         turn = atan2(sin(turn), cos(turn))
-        expected = 1 if tick < 12 or (tick >= 24 and tick % 2 == 0) else -1
-        assert 0 < turn * expected <= 3.0 / hz + EPS, (tick, turn)
+        assert abs(turn) <= 3.0 / hz + EPS, (tick, turn)
         turret = after["turretAngle"] - before["turretAngle"]
         assert abs(atan2(sin(turret), cos(turret))) <= 6.0 / hz + EPS, (tick, turret)
+    # The hull keeps turning briefly when the command reverses.
+    assert states[13]["bodyAngle"] > states[12]["bodyAngle"]
+    assert states[24]["bodyAngle"] < states[20]["bodyAngle"]
 
 
 def check_failure(name, message, expected_tick=None):
