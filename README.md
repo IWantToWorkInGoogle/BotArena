@@ -40,6 +40,9 @@ dotnet build server
 npm --prefix frontend run build
 # При запущенном сервере
 python3 scripts/smoke.py
+python3 -B scripts/validate_strategies.py
 ```
+
+Готовые функции для ручной проверки и ожидаемое поведение описаны в [проверочных стратегиях](scripts/strategies/README.md).
 
 Архитектура, контракт HTTP и согласованные допущения описаны в [контексте проекта](docs/project.md).
