@@ -58,7 +58,7 @@ function ArenaView({ arena, frame, next, fraction, finished, winner }: {
         return (
           <g key={bot.id} transform={`translate(${x} ${y})`} opacity={faded ? 0.35 : 1}
             className={won ? 'winning-bot' : undefined} style={{ color }}>
-            {won && <ellipse cx="0" cy=".12" rx=".91" ry=".7" fill={`url(#${haloId})`} />}
+            {won && <ellipse cx="0" cy="0" rx=".91" ry=".7" fill={`url(#${haloId})`} />}
             <g transform={`rotate(${hull})`}>
               <rect x="-.34" y="-.29" width=".68" height=".58" rx=".04" fill="#111c2c" stroke={color} strokeWidth=".045" />
               <path d="M -.29 -.2 H .29 M -.29 .2 H .29" stroke={color} strokeWidth=".045" />
