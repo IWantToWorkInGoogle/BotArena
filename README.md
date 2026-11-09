@@ -1,0 +1,2 @@
+# BotArena
+[Hackathon] BotArena
