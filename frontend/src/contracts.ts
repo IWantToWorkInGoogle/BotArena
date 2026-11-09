@@ -47,3 +47,5 @@ export type MatchJobStatus =
   | { state: 'queued'; position: number }
   | { state: 'running' }
   | { state: 'completed'; match: MatchResponse | null; error: string | null; diagnostic?: ScriptError | null };
+
+export type StrategyLanguage = "javascript" | "python";

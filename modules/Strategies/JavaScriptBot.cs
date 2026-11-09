@@ -6,20 +6,9 @@ using Jint.Runtime;
 
 namespace BotArena;
 
-public interface IBotRuntime : IDisposable
-{
-    BotAction Decide(BotObservation observation);
-}
-
-public sealed class StrategyException(string message, int? tick = null, int? line = null, int? column = null) : Exception(message)
-{
-    public int? Tick { get; } = tick;
-    public int? Line { get; } = line;
-    public int? Column { get; } = column;
-}
-
 public sealed class JavaScriptBot : IBotRuntime
 {
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private const string StrategySource = "strategy.js";
 
     private readonly Engine engine = new(options =>
@@ -81,14 +70,14 @@ public sealed class JavaScriptBot : IBotRuntime
     {
         try
         {
-            var input = JsonSerializer.Serialize(observation, MatchWorker.Json);
+            var input = JsonSerializer.Serialize(observation, Json);
             var output = engine.Invoke(execute, tick, new JsString(input)).AsString();
             if (output.Length == 0)
             {
                 throw new StrategyException(
                     "tick(state) должна вернуть объект с числовыми leftTrack, rightTrack и aimDirection { x, y }, а также логическим shoot.", observation.Tick);
             }
-            return JsonSerializer.Deserialize<BotAction>(output, MatchWorker.Json)!;
+            return JsonSerializer.Deserialize<BotAction>(output, Json)!;
         }
         catch (Exception error) when (IsScriptError(error))
         {

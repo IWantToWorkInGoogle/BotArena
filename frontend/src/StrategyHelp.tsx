@@ -1,3 +1,4 @@
+import type { StrategyLanguage } from './contracts';
 import { text } from './text';
 
 function Fields({ title, rows }: { title: string; rows: readonly (readonly [string, string, string])[] }) {
@@ -18,11 +19,11 @@ function Fields({ title, rows }: { title: string; rows: readonly (readonly [stri
   );
 }
 
-export function StrategyHelp() {
+export function StrategyHelp({ language }: { language: StrategyLanguage }) {
   return (
     <details>
       <summary>{text.help.title}</summary>
-      <p>{text.help.intro}</p>
+      <p>{language === 'python' ? text.help.pythonIntro : text.help.intro}</p>
       <Fields title={text.help.input} rows={text.help.inputFields} />
       <Fields title={text.help.output} rows={text.help.outputFields} />
       <Fields title={text.help.nested} rows={text.help.nestedFields} />

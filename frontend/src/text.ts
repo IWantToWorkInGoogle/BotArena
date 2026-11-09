@@ -1,10 +1,16 @@
+import type { StrategyLanguage } from './contracts';
+
+const languages = { javascript: 'JavaScript', python: 'Python' } as const;
+
 export const text = {
   language: 'ru',
   title: 'BotArena · Match Lab',
   brand: '● BotArena',
   mode: 'Match Lab / дуэль 1×1',
   strategy: 'Стратегия бота',
-  strategyLanguage: 'JavaScript · tick(state)',
+  languageLabel: 'Язык стратегии',
+  languages,
+  strategyLanguage: (language: StrategyLanguage) => `${languages[language]} · tick(state)`,
   strategyComment: 'Пока цель скрыта, объезжаем стену сверху.',
   opponent: 'Противник',
   opponents: {
@@ -25,8 +31,8 @@ export const text = {
   matchError: 'Не удалось рассчитать матч.',
   diagnostic: {
     title: 'Ошибка стратегии',
-    javascriptTick: 'JavaScript прервал выполнение tick(state).',
-    javascriptLoad: 'Не удалось загрузить код стратегии.',
+    tickFailure: 'Выполнение tick(state) прервалось.',
+    load: 'Не удалось загрузить код стратегии.',
     line: 'Строка',
     column: 'Столбец',
     tick: 'Тик',
@@ -52,6 +58,7 @@ export const text = {
   },
   help: {
     title: 'Как управлять ботом',
+    pythonIntro: 'Движок вызывает tick(state) 20 раз в игровую секунду. Состояние и вложенные объекты приходят как словари, массивы как списки, null как None. Верните словарь команды. Пустой словарь {} оставляет танк без тяги и выстрела.',
     intro: 'Движок вызывает tick(state) 20 раз в игровую секунду. Функция должна синхронно вернуть объект команды. Например, {} оставляет танк без тяги и выстрела.',
     columns: ['Поле', 'Тип', 'Что означает'],
     input: 'Входной объект state',

@@ -15,7 +15,8 @@ if (Directory.Exists(app.Environment.WebRootPath))
     app.UseStaticFiles();
 }
 
-app.MapGet("/api/opponents", () => Match.Opponents);
+app.MapGet("/api/opponents", () => OpponentCatalog.Opponents);
+app.MapGet("/api/strategy-languages", () => StrategyLanguages.Available());
 app.MapPost("/api/match-jobs", (MatchRequest request, MatchQueue queue) =>
 {
     if (Validate(request) is { } invalid) return invalid;
@@ -46,8 +47,10 @@ static IResult? Validate(MatchRequest request)
 {
     if (string.IsNullOrWhiteSpace(request.BotCode) || request.BotCode.Length > 16_384)
         return Results.BadRequest(new { error = "Нужен код стратегии длиной от 1 до 16 384 символов." });
-    if (!Match.Opponents.Any(opponent => opponent.Id == request.OpponentId))
+    if (!OpponentCatalog.Opponents.Any(opponent => opponent.Id == request.OpponentId))
         return Results.BadRequest(new { error = "Выберите существующего противника." });
+    if (request.Language is { } language && !StrategyLanguages.Available().Contains(language))
+        return Results.BadRequest(new { error = "Выбранный язык стратегии недоступен." });
     return null;
 }
 

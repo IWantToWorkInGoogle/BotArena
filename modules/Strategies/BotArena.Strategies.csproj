@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Simulation/BotArena.Simulation.csproj" />
+    <PackageReference Include="Jint" Version="4.17.0" />
+    <EmbeddedResource Include="PythonBridge.py" LogicalName="BotArena.PythonBridge.py" />
+
+  </ItemGroup>
+</Project>

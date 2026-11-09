@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="BotArena.Tests" />
-    <PackageReference Include="Jint" Version="4.17.0" />
+    <ProjectReference Include="../modules/Simulation/BotArena.Simulation.csproj" />
+    <ProjectReference Include="../modules/Strategies/BotArena.Strategies.csproj" />
   </ItemGroup>
 </Project>

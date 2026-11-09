@@ -18,8 +18,9 @@ internal static class MatchWorker
         MatchWorkerResult result;
         try
         {
-            using var bot = new JavaScriptBot(request.BotCode);
-            result = new(Match.Run(bot, request.OpponentId), null);
+            using var bot = StrategyLanguages.Create(request.Language, request.BotCode);
+            using var opponent = StrategyLanguages.Create(StrategyLanguages.JavaScript, OpponentCatalog.GetCode(request.OpponentId));
+            result = new(Match.Run(MatchConfig.Classic, bot, opponent), null);
         }
         catch (StrategyException error)
         {
@@ -45,6 +46,27 @@ internal static class MatchWorker
         start.Environment["DOTNET_GCHeapHardLimit"] = "0x8000000";
         start.Environment["DOTNET_gcServer"] = "0";
 
+        var scratch = request.Language == StrategyLanguages.Python
+            ? Directory.CreateTempSubdirectory("botarena-match-")
+            : null;
+        if (scratch is not null) start.Environment[PythonBot.ScratchVariable] = scratch.FullName;
+        try
+        {
+            return await RunProcessAsync(start, request, cancellation);
+        }
+        finally
+        {
+            if (scratch is not null)
+            {
+                PythonBot.DeleteScratch(new DirectoryInfo(Path.Combine(scratch.FullName, "guest")));
+                scratch.Delete(recursive: true);
+            }
+        }
+    }
+
+    private static async Task<MatchWorkerResult> RunProcessAsync(
+        ProcessStartInfo start, MatchRequest request, CancellationToken cancellation)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot start match worker.");

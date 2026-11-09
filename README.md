@@ -14,6 +14,24 @@ dotnet run --project server
 
 Откройте [http://127.0.0.1:5050](http://127.0.0.1:5050). Для разработки фронтенда запустите `npm --prefix frontend run dev` в отдельном терминале с работающим сервером и откройте [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
+## Python в редакторе
+
+По умолчанию доступен JavaScript. Чтобы включить Python на macOS или Linux (ARM64 или x86-64), установите среду из корня репозитория. Для установщика нужен Python 3.11+.
+
+```sh
+python3 scripts/install_python_runtime.py
+BOTARENA_PYTHON_RUNTIME="$PWD/.botarena/python" dotnet run --project server
+```
+
+Запускайте сервер от обычного пользователя. Установщик скачивает закреплённые версии CPython WASI и Wasmtime и сверяет SHA-256. После перезапуска выберите **Python** в поле «Язык стратегии». Редактор подставит пример и будет хранить отдельный черновик для каждого языка до перезагрузки страницы.
+
+```python
+def tick(state):
+    return {"leftTrack": 1, "rightTrack": 1}
+```
+
+Поля команды одинаковы в обоих языках. В Python состояние и вложенные объекты приходят как словари, массивы как списки, а скрытый противник обозначен `None`.
+
 ## Стратегия
 
 Редактор содержит готовую стратегию. Минимальный бот остаётся на месте и ведёт огонь по видимой цели:
@@ -43,6 +61,8 @@ npm --prefix frontend run build
 python3 scripts/smoke.py
 python3 -B scripts/validate_strategies.py
 python3 -B scripts/validate_queue.py
+# При запущенном сервере с Python WASI
+python3 -B scripts/validate_python.py
 ```
 
 Готовые функции для ручной проверки и ожидаемое поведение описаны в [проверочных стратегиях](scripts/strategies/README.md).

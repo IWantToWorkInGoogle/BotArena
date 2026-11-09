@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { MatchJobStatus, Opponent, Replay, ScriptError } from './contracts';
+import type { MatchJobStatus, Opponent, Replay, ScriptError, StrategyLanguage } from './contracts';
 import { ReplayPlayer } from './ReplayPlayer';
 import { MatchDiagnosticError, runMatch } from './matchApi';
 import { StrategyHelp } from './StrategyHelp';
@@ -32,8 +32,33 @@ const example = `function tick({ self, enemy }) {
   };
 }`;
 
+const examples = {
+  javascript: example,
+  python: `def tick(state):
+    enemy = state["enemy"]
+    if enemy is None:
+        return {"leftTrack": 1, "rightTrack": 0.5}
+
+    self_position = state["self"]["position"]
+    target = enemy["position"]
+    return {
+        "aimDirection": {
+            "x": target["x"] - self_position["x"],
+            "y": target["y"] - self_position["y"],
+        },
+        "shoot": state["self"]["canShoot"],
+    }
+`,
+};
+
 function App() {
-  const [code, setCode] = useState(example);
+  const [languages, setLanguages] = useState<StrategyLanguage[]>(['javascript']);
+  const [language, setLanguage] = useState<StrategyLanguage>('javascript');
+  const [drafts, setDrafts] = useState(examples);
+  const code = drafts[language];
+  const updateCode = useCallback((value: string) => {
+    setDrafts(previous => ({ ...previous, [language]: value }));
+  }, [language]);
   const [opponents, setOpponents] = useState<Opponent[]>([]);
   const [opponentId, setOpponentId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -57,6 +82,10 @@ function App() {
       }
     }
     void load();
+    void fetch('/api/strategy-languages', { signal: controller.signal })
+      .then(response => response.ok ? response.json() : ['javascript'])
+      .then((available: StrategyLanguage[]) => setLanguages(available))
+      .catch(() => { /* JavaScript is the default. */ });
     return () => {
       controller.abort();
       activeRun.current?.abort();
@@ -74,7 +103,7 @@ function App() {
     setScriptError(undefined);
     setReplay(undefined);
     try {
-      const match = await runMatch(code, opponentId, controller.signal, setJobStatus);
+      const match = await runMatch(code, opponentId, language, controller.signal, setJobStatus);
       setReplay(match.replay);
       setScriptError(match.error ?? undefined);
     } catch (problem) {
@@ -104,9 +133,15 @@ function App() {
       <div className="layout">
         <form className="panel editor" onSubmit={run}>
           <h1>{text.strategy}</h1>
-          <span className="muted" id="strategy-label">{text.strategyLanguage}</span>
+          <div className="strategy-language">
+            <span className="muted" id="strategy-label">{text.strategyLanguage(language)}</span>
+            <select aria-label={text.languageLabel} value={language} disabled={loading}
+              onChange={event => setLanguage(event.target.value as StrategyLanguage)}>
+              {languages.map(item => <option key={item} value={item}>{text.languages[item]}</option>)}
+            </select>
+          </div>
           <Suspense fallback={<div className="code-editor" />}>
-            <StrategyEditor initialCode={example} onChange={setCode} />
+            <StrategyEditor key={language} language={language} initialCode={code} onChange={updateCode} />
           </Suspense>
           {error && <p role="alert" className="error-card">{error}</p>}
           {scriptError && (
@@ -116,7 +151,7 @@ function App() {
                 <span>{text.replay[scriptError.botId]}</span>
               </div>
               <p>{scriptError.line == null ? scriptError.message :
-                scriptError.tick == null ? text.diagnostic.javascriptLoad : text.diagnostic.javascriptTick}</p>
+                scriptError.tick == null ? text.diagnostic.load : text.diagnostic.tickFailure}</p>
               <dl className="error-details">
                 {scriptError.line != null && <div><dt>{text.diagnostic.line}</dt><dd>{scriptError.line}</dd></div>}
                 {scriptError.column != null && <div><dt>{text.diagnostic.column}</dt><dd>{scriptError.column}</dd></div>}
@@ -124,7 +159,7 @@ function App() {
               </dl>
             </div>
           )}
-          <StrategyHelp />
+          <StrategyHelp language={language} />
           <label htmlFor="opponent">{text.opponent}</label>
           <select id="opponent" value={opponentId} onChange={event => setOpponentId(event.target.value)}>
             {opponents.map(item => <option key={item.id} value={item.id}>{opponentText(item).name}</option>)}
