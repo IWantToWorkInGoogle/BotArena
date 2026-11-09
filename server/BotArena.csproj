@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="BotArena.Tests" />
     <PackageReference Include="Jint" Version="4.17.0" />
   </ItemGroup>
 </Project>

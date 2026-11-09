@@ -42,8 +42,11 @@ npm --prefix frontend run build
 # При запущенном сервере
 python3 scripts/smoke.py
 python3 -B scripts/validate_strategies.py
+python3 -B scripts/validate_queue.py
 ```
 
 Готовые функции для ручной проверки и ожидаемое поведение описаны в [проверочных стратегиях](scripts/strategies/README.md).
 
 Архитектура, контракт HTTP и согласованные допущения описаны в [контексте проекта](docs/project.md).
+
+Текст интерфейса редактируется в [frontend/src/text.ts](frontend/src/text.ts). Диагностика движка приходит из API.

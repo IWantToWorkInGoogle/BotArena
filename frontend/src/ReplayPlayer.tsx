@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Arena, Frame, Point, Replay } from './contracts';
+import type { Arena, Bot, Frame, Point, Replay } from './contracts';
+import { text } from './text';
 
 const colors = { player: '#3dc9f1', opponent: '#ff9a45' };
-const names = { player: 'Ваш бот', opponent: 'Противник' };
-const reasons = { BotDestroyed: 'нокаут', TimeLimit: 'истекло время', BotError: 'ошибка стратегии' };
+const copy = text.replay;
 const speeds = [0.5, 1, 2, 4];
 
 function positionBetween(start: Point, end: Point, fraction: number): Point {
@@ -15,9 +15,11 @@ function angleBetween(start: number, end: number, fraction: number): number {
   return (start + turn * fraction) * 180 / Math.PI;
 }
 
-function ArenaView({ arena, frame, next, fraction }: { arena: Arena; frame: Frame; next: Frame; fraction: number }) {
+function ArenaView({ arena, frame, next, fraction, finished, winner }: {
+  arena: Arena; frame: Frame; next: Frame; fraction: number; finished: boolean; winner: Bot['id'] | null;
+}) {
   return (
-    <svg className="arena" viewBox={`0 0 ${arena.width} ${arena.height}`} role="img" aria-label="Арена матча">
+    <svg className="arena" viewBox={`0 0 ${arena.width} ${arena.height}`} role="img" aria-label={copy.imageLabel}>
       <defs>
         <pattern id="grid" width="1" height="1" patternUnits="userSpaceOnUse">
           <path d="M 1 0 H 0 V 1" fill="none" stroke="#253b51" strokeWidth=".04" />
@@ -32,7 +34,7 @@ function ArenaView({ arena, frame, next, fraction }: { arena: Arena; frame: Fram
         return <rect key={bullet.id} x="-.095" y="-.045" width=".19" height=".09"
           transform={`translate(${x} ${y}) rotate(${degrees})`} fill={colors[bullet.ownerBotId]} />;
       })}
-      {frame.events.map((event, index) => {
+      {!finished && frame.events.map((event, index) => {
         if (!event.position || event.type === 'MatchFinished') return null;
         const hit = event.type === 'BotHit' || event.type === 'BotDestroyed';
         return <circle key={index} cx={event.position.x} cy={event.position.y}
@@ -45,9 +47,14 @@ function ArenaView({ arena, frame, next, fraction }: { arena: Arena; frame: Fram
         const hull = angleBetween(bot.bodyAngle, end.bodyAngle, fraction);
         const turret = angleBetween(bot.turretAngle, end.turretAngle, fraction);
         const color = colors[bot.id];
+        const won = finished && winner === bot.id;
+        const faded = bot.hp === 0 || (finished && winner !== null && !won);
         return (
-          <g key={bot.id} transform={`translate(${x} ${y})`} opacity={bot.hp > 0 ? 1 : 0.35}>
+          <g key={bot.id} transform={`translate(${x} ${y})`} opacity={faded ? 0.35 : 1}
+            className={won ? 'winning-bot' : undefined} style={{ color }}>
             <g transform={`rotate(${hull})`}>
+              {won && <rect x="-.45" y="-.4" width=".9" height=".8" rx=".08" fill="none"
+                stroke={color} strokeWidth=".045" />}
               <rect x="-.34" y="-.29" width=".68" height=".58" rx=".04" fill="#111c2c" stroke={color} strokeWidth=".045" />
               <path d="M -.29 -.2 H .29 M -.29 .2 H .29" stroke={color} strokeWidth=".045" />
             </g>
@@ -91,31 +98,40 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const frame = replay.frames[index];
   const next = replay.frames[Math.min(last, index + 1)];
   const winner = replay.result.winnerBotId;
-  const outcome = winner ? `Победитель — ${names[winner].toLowerCase()}` : 'Ничья';
+  const outcome = winner ? copy.winner(copy[winner]) : copy.draw;
   const reason = !winner && replay.result.reason === 'BotDestroyed'
-    ? 'двойной нокаут' : reasons[replay.result.reason];
+    ? copy.doubleKnockout : copy.reason[replay.result.reason];
 
   return (
     <>
-      <ArenaView arena={replay.arena} frame={frame} next={next} fraction={position - index} />
+      <div className="arena-stage">
+        <ArenaView arena={replay.arena} frame={frame} next={next} fraction={position - index}
+          finished={finished} winner={winner} />
+        {finished && <p role="status" className="outcome">{copy.outcome(outcome, reason)}</p>}
+      </div>
       <div className="controls">
         <button type="button" onClick={() => {
           if (finished) setPosition(0);
           setPlaying(finished || !playing);
-        }}>{finished ? 'С начала' : playing ? 'Пауза' : 'Продолжить'}</button>
-        <input aria-label="Позиция реплея" type="range" min="0" max={last} value={index} onChange={event => {
+        }}>{finished ? copy.restart : playing ? copy.pause : copy.resume}</button>
+        <input aria-label={copy.position} type="range" min="0" max={last} value={index} onChange={event => {
           setPlaying(false);
           setPosition(Number(event.target.value));
         }} />
-        <output>{(position / replay.tickRate).toFixed(1)} / {(last / replay.tickRate).toFixed(1)} с</output>
-        <select aria-label="Скорость реплея" value={speed} onChange={event => setSpeed(Number(event.target.value))}>
-          {speeds.map(value => <option key={value} value={value}>{value}×</option>)}
+        <output>{copy.time(position / replay.tickRate, last / replay.tickRate)}</output>
+        <select aria-label={copy.speed} value={speed} onChange={event => setSpeed(Number(event.target.value))}>
+          {speeds.map(value => <option key={value} value={value}>{copy.speedOption(value)}</option>)}
         </select>
       </div>
-      <div className="status">
-        {frame.bots.map(bot => <div key={bot.id} style={{ color: colors[bot.id] }}>{names[bot.id]} · <b>{bot.hp} HP</b></div>)}
-      </div>
-      {finished && <p role="status" className="outcome">{outcome} · {reason}</p>}
+      <ul className="health" aria-label={copy.health}>
+        {frame.bots.map(bot => (
+          <li key={bot.id} style={{ color: colors[bot.id] }}>
+            <span>{copy[bot.id]}</span>
+            <meter aria-label={copy[bot.id]} min={0} max={bot.maxHp} value={bot.hp} />
+            <b>{copy.hp(bot.hp, bot.maxHp)}</b>
+          </li>
+        ))}
+      </ul>
     </>
   );
 }

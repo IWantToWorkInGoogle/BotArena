@@ -34,3 +34,8 @@ export interface MatchResponse {
   error: { botId: Bot['id']; tick: number | null; message: string } | null;
 }
 export interface Opponent { id: string; name: string; description: string }
+
+export type MatchJobStatus =
+  | { state: 'queued'; position: number }
+  | { state: 'running' }
+  | { state: 'completed'; match: MatchResponse | null; error: string | null };
