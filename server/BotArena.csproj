@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotArena.Tests" />
+    <ProjectReference Include="../modules/Simulation/BotArena.Simulation.csproj" />
+    <ProjectReference Include="../modules/Strategies/BotArena.Strategies.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+frontend/node_modules/
+server/wwwroot/
+.DS_Store
+
+.botarena/
