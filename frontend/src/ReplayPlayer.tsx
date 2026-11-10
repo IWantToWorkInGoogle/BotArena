@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Replay } from './contracts';
+import type { Arena, Frame, ReachMarker, Replay } from './contracts';
+import { arenaViewBox } from './ArenaCoordinates';
 import { BlueprintArena, tacticalPhase, tacticalPhaseLabel } from './BlueprintArena';
 import type { CameraMode } from './BlueprintArena';
+import { playShotSound, unlockBattleAudio } from './battleAudio';
 import { buildShotPlan, directorPlaybackRate, shotAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
-import { botCssColor, botLabel } from './botVisuals';
+import { botColor, botLabel as rosterBotLabel, resolveTeamId, teamWon } from './botDisplay';
+import { botCssColor, botLabel as cinematicBotLabel } from './botVisuals';
 import { text } from './text';
 
 const copy = text.replay;
 const speeds = [0.5, 1, 2, 4];
+const DAMAGE_LIFE = 30;
 const fixedCameras: Array<{ mode: CameraMode; label: string }> = [
   { mode: 'auto', label: 'Кино' },
   { mode: 'adaptive', label: 'Разрез' },
@@ -17,10 +21,86 @@ const fixedCameras: Array<{ mode: CameraMode; label: string }> = [
   { mode: 'timeline', label: 'Башня времени' },
 ];
 
-export function ReplayPlayer({ replay }: { replay: Replay }) {
+function collectDamageNumbers(frames: Frame[], index: number, fraction: number) {
+  const start = Math.max(0, index - DAMAGE_LIFE);
+  const items: Array<{ key: string; x: number; y: number; damage: number; age: number; zone: boolean }> = [];
+  for (let frameIndex = start; frameIndex <= index; frameIndex++) {
+    const age = index - frameIndex + fraction;
+    for (const event of frames[frameIndex].events) {
+      if ((event.type !== 'BotHit' && event.type !== 'BotDestroyed' && event.type !== 'ZoneDamage') ||
+        event.damage == null || event.damage <= 0 || !event.position) continue;
+      items.push({
+        key: `${frameIndex}-${event.type}-${event.bulletId ?? 0}-${event.targetBotId ?? ''}-${event.damage}`,
+        x: event.position.x,
+        y: event.position.y,
+        damage: event.damage,
+        age,
+        zone: event.type === 'ZoneDamage',
+      });
+    }
+  }
+  return items;
+}
+
+function ReplayEffectsOverlay({ arena, frame, marker, damageNumbers, finished }: {
+  arena: Arena;
+  frame: Frame;
+  marker?: ReachMarker | null;
+  damageNumbers: Array<{ key: string; x: number; y: number; damage: number; age: number; zone: boolean }>;
+  finished: boolean;
+}) {
+  if (!frame.safeZone && !marker && damageNumbers.length === 0) return null;
+  return (
+    <svg className="replay-effects-overlay" viewBox={arenaViewBox(arena.width, arena.height)} aria-hidden="true">
+      {frame.safeZone && (
+        <g className="safe-zone">
+          <path
+            fill="#7a1f2433"
+            d={[
+              `M0 0H${arena.width}V${arena.height}H0Z`,
+              `M${frame.safeZone.x} ${frame.safeZone.y}H${frame.safeZone.x + frame.safeZone.width}V${frame.safeZone.y + frame.safeZone.height}H${frame.safeZone.x}Z`,
+            ].join('')}
+            fillRule="evenodd"
+          />
+          <rect
+            x={frame.safeZone.x}
+            y={frame.safeZone.y}
+            width={frame.safeZone.width}
+            height={frame.safeZone.height}
+            fill="none"
+            stroke="#ff8f8f"
+            strokeWidth=".07"
+            strokeDasharray=".2 .12"
+          />
+        </g>
+      )}
+      {marker && (
+        <g className="objective-marker">
+          <circle cx={marker.x} cy={marker.y} r={marker.radius}
+            fill="#3dc9f133" stroke="#7be0ff" strokeWidth=".07" strokeDasharray=".18 .12" />
+          <circle cx={marker.x} cy={marker.y} r=".12" fill="#7be0ff" />
+        </g>
+      )}
+      {!finished && damageNumbers.map(item => (
+        <text
+          key={item.key}
+          className={item.zone ? 'arena-damage arena-damage-zone' : 'arena-damage'}
+          x={item.x}
+          y={item.y - 0.35 - item.age * 0.045}
+          textAnchor="middle"
+          opacity={Math.max(0, 1 - item.age / DAMAGE_LIFE)}
+        >
+          -{item.damage}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: Record<string, string> }) {
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(0.5);
   const [cameraMode, setCameraMode] = useState<CameraMode>('adaptive');
   const [showTrails, setShowTrails] = useState(true);
   const [showChronoXray, setShowChronoXray] = useState(true);
@@ -28,12 +108,13 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [traceBotId, setTraceBotId] = useState(replay.frames[0]?.bots[0]?.id ?? '');
   const heldChronoShots = useRef(new Set<string>());
   const chronoHoldUntil = useRef(0);
+  const lastSoundFrame = useRef(-1);
   const shotPlan = useMemo(() => buildShotPlan(replay), [replay]);
   const botIds = useMemo(() => [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))], [replay]);
   const multiple = botIds.length > 2;
   const cameraOptions = useMemo(() => [
     ...fixedCameras,
-    ...botIds.map(id => ({ mode: `bot:${id}` as CameraMode, label: botLabel(id, multiple) })),
+    ...botIds.map(id => ({ mode: `bot:${id}` as CameraMode, label: cinematicBotLabel(id, multiple) })),
   ], [botIds, multiple]);
   const lastFrame = replay.frames.length - 1;
   const visualEnd = lastFrame + VISUAL_TAIL_FRAMES;
@@ -42,9 +123,12 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   useEffect(() => {
     heldChronoShots.current.clear();
     chronoHoldUntil.current = 0;
+    lastSoundFrame.current = -1;
     setPosition(0);
     setPlaying(true);
+    setSpeed(0.5);
     setTraceBotId(replay.frames[0]?.bots[0]?.id ?? '');
+    void unlockBattleAudio();
   }, [replay]);
 
   useEffect(() => {
@@ -90,10 +174,22 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const frame = replay.frames[index];
   const next = replay.frames[Math.min(lastFrame, index + 1)];
   const fraction = position < lastFrame ? position - Math.floor(position) : 0;
-  const winner = replay.result.winnerBotId;
-  const outcome = winner ? copy.winner(botLabel(winner, multiple)) : copy.draw;
-  const reason = !winner && replay.result.reason === 'BotDestroyed'
-    ? (multiple ? copy.allDestroyed : copy.doubleKnockout) : copy.reason[replay.result.reason];
+  const roster = frame.bots;
+  const damageNumbers = collectDamageNumbers(replay.frames, index, fraction);
+  const displayLabel = (botId: string, teamId?: string) =>
+    rosterBotLabel(botId, teamId, roster, botNames);
+  const winnerBotId = replay.result.winnerBotId;
+  const winnerTeamId = replay.result.winnerTeamId;
+  const outcome = teamWon(replay.result)
+    ? (winnerTeamId === 'player' && roster.filter(bot => resolveTeamId(bot) === 'player').length > 1
+      ? copy.teamWin
+      : copy.winner(displayLabel(winnerBotId ?? 'player', 'player')))
+    : winnerBotId
+      ? copy.winner(displayLabel(winnerBotId, roster.find(bot => bot.id === winnerBotId)?.teamId))
+      : copy.draw;
+  const reason = !winnerBotId && !winnerTeamId && replay.result.reason === 'BotDestroyed'
+    ? (multiple ? copy.allDestroyed : copy.doubleKnockout)
+    : copy.reason[replay.result.reason];
   const activeShot = shotAt(shotPlan, position);
   const cinematicFocus = (cameraMode === 'auto' || cameraMode === 'adaptive')
     && (activeShot?.kind === 'projectile' || activeShot?.kind === 'impact' || activeShot?.kind === 'finale');
@@ -130,6 +226,22 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
     setPosition(nextPosition);
   };
 
+  useEffect(() => {
+    if (!playing || finished) return;
+    const previous = lastSoundFrame.current;
+    if (index === previous) return;
+    if (previous >= 0 && index - previous > 4) {
+      lastSoundFrame.current = index;
+      return;
+    }
+    for (let frameIndex = Math.max(0, previous + 1); frameIndex <= index; frameIndex++) {
+      for (const event of replay.frames[frameIndex].events) {
+        if (event.type === 'ShotFired') playShotSound();
+      }
+    }
+    lastSoundFrame.current = index;
+  }, [finished, index, playing, replay.frames]);
+
   return (
     <>
       <div className={`arena-stage blueprint-stage${cinematicFocus ? ' cinematic-focus' : ''}`
@@ -139,8 +251,15 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
           position={position} cameraMode={cameraMode} showTrails={showTrails} shotPlan={shotPlan}
           showChronoXray={showChronoXray} showTacticalTrace={showTacticalTrace}
           traceBotId={traceBotId} perceptionBotId={traceBotId} onSeek={seekReplay} />
+        <ReplayEffectsOverlay
+          arena={replay.arena}
+          frame={frame}
+          marker={replay.marker}
+          damageNumbers={damageNumbers}
+          finished={finished}
+        />
         <div className="blueprint-hud" aria-hidden="true">
-          <span>{cameraMode === 'perception' ? `BOT PERCEPTION / ${botLabel(traceBotId)}`
+          <span>{cameraMode === 'perception' ? `BOT PERCEPTION / ${cinematicBotLabel(traceBotId, multiple)}`
             : cameraMode === 'timeline' ? 'CHRONOSPACE / TIME TOWER'
             : (cameraMode === 'auto' || cameraMode === 'adaptive') && activeShot
             ? `${cameraMode === 'adaptive' ? 'SECTION DIRECTOR' : 'CINEMA DIRECTOR'} / ${activeShot.label}`
@@ -166,7 +285,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
         {showTacticalTrace && cameraMode !== 'perception' && cameraMode !== 'timeline'
           && traceSample && tracePhase && (
           <div className={`tactical-readout phase-${tracePhase}`} aria-hidden="true">
-            <span>TACTICAL TRACE / {botLabel(traceBotId)}</span>
+            <span>TACTICAL TRACE / {cinematicBotLabel(traceBotId, multiple)}</span>
             <strong>{tacticalPhaseLabel(tracePhase)}</strong>
             {traceCommands.map(([command, value]) => (
               <div className="track-command" key={command}>
@@ -181,7 +300,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
         )}
         {cameraMode === 'perception' && traceSample && (
           <div className={`perception-readout ${perceptionHasContact ? 'contact' : 'lost'}`} aria-hidden="true">
-            <span>PERCEPTION FEED / {botLabel(traceBotId)}</span>
+            <span>PERCEPTION FEED / {cinematicBotLabel(traceBotId, multiple)}</span>
             <strong>{perceptionHasContact ? 'ЦЕЛЬ ВИДНА'
               : lastVisibleSample ? `КОНТАКТ ПОТЕРЯН · ${lostContactSeconds?.toFixed(1)}s`
               : 'ЦЕЛЬ НЕ ОБНАРУЖЕНА'}</strong>
@@ -227,17 +346,19 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
           {(showTacticalTrace || cameraMode === 'perception') && botIds.length > 1 && (
             <select aria-label="Бот для анализа" value={traceBotId}
               onChange={event => setTraceBotId(event.target.value)}>
-              {botIds.map(id => <option key={id} value={id}>{botLabel(id)}</option>)}
+              {botIds.map(id => <option key={id} value={id}>{cinematicBotLabel(id, multiple)}</option>)}
             </select>
           )}
         </div>
       </div>
       <div className="controls replay-controls">
         <button type="button" onClick={() => {
+          void unlockBattleAudio();
           if (finished) {
             heldChronoShots.current.clear();
             chronoHoldUntil.current = 0;
             setPosition(0);
+            lastSoundFrame.current = -1;
           }
           setPlaying(finished || !playing);
         }}>{finished ? copy.restart : playing ? copy.pause : copy.resume}</button>
@@ -250,13 +371,20 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
         </select>
       </div>
       <ul className="health" aria-label={copy.health}>
-        {frame.bots.map(bot => (
-          <li key={bot.id} style={{ color: botCssColor(bot.id) }}>
-            <span>{botLabel(bot.id, multiple)}{bot.movement && <small>{text.movements[bot.movement]}</small>}</span>
-            <meter aria-label={botLabel(bot.id, multiple)} min={0} max={bot.maxHp} value={bot.hp} />
-            <b>{bot.forfeited ? copy.forfeited : copy.hp(bot.hp, bot.maxHp)}</b>
-          </li>
-        ))}
+        {frame.bots.map(bot => {
+          const label = displayLabel(bot.id, bot.teamId);
+          const color = botNames ? botColor(bot, roster) : botCssColor(bot.id);
+          return (
+            <li key={bot.id} style={{ color }}>
+              <span>
+                {label}
+                {bot.movement && <small>{text.movements[bot.movement]}</small>}
+              </span>
+              <meter aria-label={label} min={0} max={bot.maxHp} value={bot.hp} />
+              <b>{bot.forfeited ? copy.forfeited : copy.hp(bot.hp, bot.maxHp)}</b>
+            </li>
+          );
+        })}
       </ul>
     </>
   );

@@ -85,11 +85,12 @@ public class OpponentNavigationTests
     }
 
     private static BotState BotAt(Vec2 position, double angle = 0) =>
-        new("opponent", position, angle, angle, 0, 100, 100, 0);
+        new("opponent", "opponent", position, angle, angle, 0, 100, 100, 0);
 
     private sealed class IdleBot : IBotRuntime
     {
         public BotAction Decide(BotObservation state) => new(0, 0, default, false);
+        public IReadOnlyList<StrategyLogLine> ConsumeLogs() => [];
         public void Dispose() { }
     }
 }

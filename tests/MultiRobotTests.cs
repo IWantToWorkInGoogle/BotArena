@@ -43,7 +43,7 @@ public class MultiRobotTests
 
         duel.Step(new Dictionary<string, BotAction> { ["shooter"] = Idle, ["far"] = Idle });
         duel.Forfeit("far");
-        Assert.Equal(new MatchResult("shooter", MatchEndReason.BotError, 2), duel.Result);
+        Assert.Equal(new MatchResult("shooter", MatchEndReason.BotError, 2, "shooter"), duel.Result);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class MultiRobotTests
             ["right"] = Idle with { Shoot = true },
             ["survivor"] = Idle,
         });
-        Assert.Equal(new MatchResult("survivor", MatchEndReason.BotDestroyed, 1), duel.Result);
+        Assert.Equal(new MatchResult("survivor", MatchEndReason.BotDestroyed, 1, "survivor"), duel.Result);
         Assert.Equal(new[] { 0, 0, 100 }, duel.CaptureFrame().Bots.Select(bot => bot.Hp));
     }
 

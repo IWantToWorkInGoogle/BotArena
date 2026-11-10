@@ -57,5 +57,6 @@ internal sealed class BuiltInOpponent(string strategy, ArenaNavigator navigator)
 
     private static double Length(Vec2 value) => double.Hypot(value.X, value.Y);
     private static double Wrap(double angle) => Math.Atan2(Math.Sin(angle), Math.Cos(angle));
+    public IReadOnlyList<StrategyLogLine> ConsumeLogs() => [];
     public void Dispose() { }
 }

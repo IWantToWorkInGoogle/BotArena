@@ -40,6 +40,7 @@ public class BehaviorSampleTests
     private sealed class FixedBot(BotAction action) : IBotRuntime
     {
         public BotAction Decide(BotObservation observation) => action;
+        public IReadOnlyList<StrategyLogLine> ConsumeLogs() => [];
         public void Dispose() { }
     }
 }
