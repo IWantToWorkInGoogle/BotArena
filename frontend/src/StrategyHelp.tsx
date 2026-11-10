@@ -34,12 +34,14 @@ export function StrategyHelp({ language, movement }: { language: StrategyLanguag
       <Fields title={text.help.input} rows={text.help.inputFields} />
       {movement === 'hover' && <p>{text.help.hoverIntro}</p>}
       <Fields title={text.help.output} rows={[
+        ...text.help.outputFields,
         ...movementFields[movement],
         ...text.help.sharedFields,
       ]} />
       <p>{text.help.turretIntro}</p>
       {language === 'python' && <p>{text.help.turretPythonImport}</p>}
       <Fields title={text.help.turretFunctions} rows={text.help.turretRows} />
+      <Fields title={text.help.helpers} rows={text.help.helperFields} />
       <Fields title={text.help.nested} rows={text.help.nestedFields} />
     </details>
   );

@@ -45,8 +45,27 @@ def main():
     status, opponents = request("/api/opponents")
     assert status == 200 and {bot["id"] for bot in opponents} == {"aggressive", "defensive"}
 
+    status, campaign = request("/api/campaign")
+    assert status == 200 and [track["id"] for track in campaign] == [
+        "controls-beginner", "controls-advanced", "modes"
+    ]
+    assert [level["id"] for level in campaign[0]["levels"]] == [
+        "move", "steer-short", "steer-long", "shoot-simple", "shoot-cover", "track", "duel"
+    ]
+    assert [level["id"] for level in campaign[1]["levels"]] == [
+        "adv-move", "adv-steer-short", "adv-steer-long", "adv-shoot-simple", "adv-shoot-cover", "adv-track", "adv-duel"
+    ]
+    assert campaign[2]["levels"] == []
+    status, move = request("/api/matches", {
+        "botCode": "function tick() { return { driveTo: { x: 10, y: 5 } }; }",
+        "campaignLevelId": "move",
+    })
+    assert status == 200 and move["replay"]["result"]["winnerBotId"] == "player"
+    assert move["replay"]["result"]["reason"] == "ObjectiveComplete"
+    assert move["replay"]["marker"]["x"] == 10
+
     app = Path(__file__).resolve().parents[1] / "frontend/src/main.tsx"
-    example = app.read_text(encoding="utf-8").split("const example = `", 1)[1].split("`;", 1)[0]
+    example = app.read_text(encoding="utf-8").split("javascript: `", 1)[1].split("`,", 1)[0]
     for opponent in opponents:
         status, match = run(example, opponent["id"])
         assert status == 200 and match["error"] is None, match

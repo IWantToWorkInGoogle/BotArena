@@ -1,4 +1,5 @@
-import type { MatchJobStatus, MatchResponse, Movement, OpponentSlot, ScriptError, StrategyLanguage } from './contracts';
+import type { MatchJobStatus, MatchResponse, ScriptError, StrategyLanguage } from './contracts';
+import type { LabSetup } from './labDraft';
 import { text } from './text';
 
 export class MatchDiagnosticError extends Error {
@@ -7,18 +8,44 @@ export class MatchDiagnosticError extends Error {
   }
 }
 
+export function buildCustomMatchPayload(setup: LabSetup, language: StrategyLanguage) {
+  const customCode = setup.bots.find(bot => bot.teamId === 'player' && bot.source === 'code');
+  return {
+    botCode: customCode?.code[language]
+      ?? setup.bots.find(bot => bot.source === 'code')?.code[language]
+      ?? 'function tick() { return {}; }',
+    language,
+    customMatch: {
+      arena: setup.arena,
+      maxTicks: setup.maxTicks,
+      spawns: setup.bots.map(bot => ({
+        id: bot.id,
+        teamId: bot.teamId,
+        x: bot.position.x,
+        y: bot.position.y,
+        bodyAngle: bot.bodyAngle,
+        turretAngle: bot.turretAngle,
+        hp: bot.hp,
+      })),
+      loadouts: setup.bots.map(bot => bot.source === 'preset'
+        ? { botId: bot.id, source: 'preset', presetId: bot.presetId }
+        : { botId: bot.id, source: 'code', code: bot.code[language] ?? '' }),
+    },
+  };
+}
+
 export async function runMatch(
   botCode: string,
-  opponents: OpponentSlot[],
   language: StrategyLanguage,
-  movement: Movement,
   signal: AbortSignal,
   onStatus: (status: MatchJobStatus) => void,
+  target: { opponentId: string } | { campaignLevelId: string } | { customMatch: unknown },
+  botCodes?: Record<string, string>,
 ): Promise<MatchResponse> {
   const response = await fetch('/api/match-jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ botCode, opponents, language, movement }),
+    body: JSON.stringify({ botCode, language, botCodes, ...target }),
     signal,
   });
   if (!response.ok) {

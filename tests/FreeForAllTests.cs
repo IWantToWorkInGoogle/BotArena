@@ -61,6 +61,7 @@ public class FreeForAllTests
     private sealed class TestBot(Func<BotObservation, BotAction> decide) : IBotRuntime
     {
         public BotAction Decide(BotObservation state) => decide(state);
+        public IReadOnlyList<StrategyLogLine> ConsumeLogs() => [];
         public void Dispose() { }
     }
 }

@@ -10,9 +10,11 @@ public sealed class PythonBot : IBotRuntime
     private static readonly TimeSpan StartupLimit = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan TickLimit = TimeSpan.FromMilliseconds(150);
     public const string ScratchVariable = "BOTARENA_PYTHON_SCRATCH";
-    private const int ReplyLimit = 4096;
+    private const int ReplyLimit = 16_384;
+    private const int LogLimit = 200;
 
     private readonly DirectoryInfo scratch;
+    private readonly List<StrategyLogLine> logs = [];
     private Process? process;
     private Task? stderr;
 
@@ -76,6 +78,7 @@ public sealed class PythonBot : IBotRuntime
     public BotAction Decide(BotObservation observation)
     {
         var reply = Exchange(observation, TickLimit, observation.Tick);
+        AppendLogs(reply.Logs, observation.Tick);
         if (reply.Action is not { } value) throw new StrategyException("Некорректная команда Python.", observation.Tick);
         var action = StrategyAction.Decode(value, observation);
         if (!double.IsFinite(action.LeftTrack) || !double.IsFinite(action.RightTrack) ||
@@ -92,13 +95,35 @@ public sealed class PythonBot : IBotRuntime
         };
     }
 
+    public IReadOnlyList<StrategyLogLine> ConsumeLogs()
+    {
+        var snapshot = logs.ToArray();
+        logs.Clear();
+        return snapshot;
+    }
+
+    private void AppendLogs(string[]? lines, int? tick)
+    {
+        if (lines is null) return;
+        foreach (var line in lines)
+        {
+            if (logs.Count >= LogLimit) break;
+            var message = line.Length > 200 ? line[..200] : line;
+            logs.Add(new(tick, message));
+        }
+    }
+
     private Reply Exchange<T>(T input, TimeSpan limit, int? tick)
     {
         using var deadline = new CancellationTokenSource(limit);
         try
         {
             var reply = ExchangeAsync(JsonSerializer.Serialize(input, Json), deadline.Token).GetAwaiter().GetResult();
-            if (reply.Error is not null) throw new StrategyException(reply.Error, tick, reply.Line, reply.Column);
+            if (reply.Error is not null)
+            {
+                AppendLogs(reply.Logs, tick);
+                throw new StrategyException(reply.Error, tick, reply.Line, reply.Column);
+            }
             return reply;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
@@ -157,5 +182,5 @@ public sealed class PythonBot : IBotRuntime
         directory.Delete(recursive: true);
     }
 
-    private sealed record Reply(bool Ready, JsonElement? Action, string? Error, int? Line, int? Column);
+    private sealed record Reply(bool Ready, JsonElement? Action, string? Error, int? Line, int? Column, string[]? Logs = null);
 }

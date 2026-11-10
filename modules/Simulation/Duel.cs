@@ -1,8 +1,10 @@
 namespace BotArena;
 
-public record BotSpawn(string Id, Vec2 Position, double BodyAngle, double TurretAngle)
+public record BotSpawn(string Id, Vec2 Position, double BodyAngle, double TurretAngle, string TeamId = "", int Hp = 100)
 {
     public IMovementModel? Movement { get; init; }
+    public string ResolvedTeamId => string.IsNullOrWhiteSpace(TeamId) ? Id : TeamId;
+    public int ResolvedHp => Math.Clamp(Hp <= 0 ? 100 : Hp, 1, 500);
 }
 
 public sealed record MatchConfig(int TickRate, int MaxTicks, ArenaState Arena, IReadOnlyList<BotSpawn> Spawns)
@@ -21,16 +23,21 @@ public sealed record MatchConfig(int TickRate, int MaxTicks, ArenaState Arena, I
     public double BulletSpeed { get; init; } = 13.0;
     public int BulletDamage { get; init; } = 20;
     public int ShotCooldownTicks { get; init; } = 12;
+    public bool ShrinkZoneEnabled { get; init; } = true;
+    public double ShrinkStartSeconds { get; init; } = 10;
+    public int ShrinkOutsideDamagePerSecond { get; init; } = 10;
+    public double ShrinkDurationSeconds { get; init; } = 20;
+    public double ShrinkFinalScale { get; init; } = 0;
 
-    public static MatchConfig Classic { get; } = new(20, 200, new(16, 10, Array.AsReadOnly(new Wall[]
+    public static MatchConfig Classic { get; } = new(20, 1000, new(16, 10, Array.AsReadOnly(new Wall[]
     {
         new(4.5, 1.9, 2.0, 1.3),
         new(7.25, 4.15, 1.5, 1.7),
         new(9.5, 6.8, 2.0, 1.3)
     })), Array.AsReadOnly(new BotSpawn[]
     {
-        new("player", new(2, 5), 0, 0),
-        new("opponent", new(14, 5), Math.PI, Math.PI)
+        new("player", new(2, 5), 0, 0, "player"),
+        new("opponent", new(14, 5), Math.PI, Math.PI, "opponent")
     }));
 }
 
@@ -68,10 +75,13 @@ public sealed class Duel : ISimulationEngine
         var tracked = new TrackedMovement(config);
         movement = config.Spawns.Select(spawn => spawn.Movement ?? tracked).ToArray();
         bots = config.Spawns.Select((s, i) =>
-            new BotState(s.Id, s.Position, s.BodyAngle, s.TurretAngle, 0, 100, 100, 0)
+        {
+            var hp = s.ResolvedHp;
+            return new BotState(s.Id, s.ResolvedTeamId, s.Position, s.BodyAngle, s.TurretAngle, 0, hp, hp, 0)
             {
                 Movement = movement[i].Id,
-            }).ToArray();
+            };
+        }).ToArray();
         walls = config.Arena.Walls.Select(w =>
             new Hitbox(new(w.X + w.Width / 2, w.Y + w.Height / 2), 0, w.Width, w.Height)).ToArray();
         cooldowns = new int[bots.Length];
@@ -106,7 +116,7 @@ public sealed class Duel : ISimulationEngine
         for (var i = 0; i < bots.Length; i++)
         {
             var candidate = bots[i];
-            if (candidate.Id == botId || !IsActive(i)) continue;
+            if (candidate.Id == botId || !IsActive(i) || candidate.TeamId == self.TeamId) continue;
             var offset = candidate.Position - self.Position;
             if (WallImpact(sightLine, offset) <= 1) continue;
             enemies.Add(candidate);
@@ -118,10 +128,14 @@ public sealed class Duel : ISimulationEngine
             }
         }
 
-        return new(tick, self, nearest, [.. bullets], config.Arena) { Enemies = enemies.AsReadOnly() };
+        return new(tick, self, nearest, [.. bullets], config.Arena)
+        {
+            Enemies = enemies.AsReadOnly(),
+            SafeZone = CurrentSafeZone(),
+        };
     }
 
-    public GameFrame CaptureFrame() => new(tick, [.. bots], [.. bullets], [.. events]);
+    public GameFrame CaptureFrame() => new(tick, [.. bots], [.. bullets], [.. events], CurrentSafeZone());
 
     public void Step(IReadOnlyDictionary<string, BotAction> actions)
     {
@@ -144,6 +158,7 @@ public sealed class Duel : ISimulationEngine
         for (var i = 0; i < bots.Length; i++)
             if (commands[i] is { } action) Fire(i, action);
         AdvanceBullets();
+        ApplyShrinkZoneDamage();
 
         if (!FinishIfEliminated(MatchEndReason.BotDestroyed) && tick == config.MaxTicks)
             Finish(new(null, MatchEndReason.TimeLimit, tick));
@@ -163,6 +178,15 @@ public sealed class Duel : ISimulationEngine
         FinishIfEliminated(MatchEndReason.BotError);
     }
 
+    public void CompleteObjective(string winnerBotId)
+    {
+        EnsureRunning();
+        var winner = bots[FindBot(winnerBotId)];
+        Finish(new(winnerBotId, MatchEndReason.ObjectiveComplete, tick, winner.TeamId));
+    }
+
+    public BotState Bot(string botId) => bots[FindBot(botId)];
+
     private bool IsActive(int index) => !bots[index].Forfeited && bots[index].Hp > 0;
 
     private int FindBot(string id) => indices.TryGetValue(id, out var index)
@@ -173,16 +197,68 @@ public sealed class Duel : ISimulationEngine
         if (Result is not null) throw new InvalidOperationException("The match is finished.");
     }
 
-    private bool FinishIfEliminated(MatchEndReason reason)
+    private SafeZoneState? CurrentSafeZone()
     {
-        BotState? survivor = null;
+        if (!config.ShrinkZoneEnabled) return null;
+        var arena = config.Arena;
+        var startTick = Math.Max(0, (int)Math.Round(config.ShrinkStartSeconds * config.TickRate));
+        if (tick < startTick)
+            return new(0, 0, arena.Width, arena.Height);
+
+        var durationTicks = Math.Max(1, (int)Math.Round(config.ShrinkDurationSeconds * config.TickRate));
+        var progress = Math.Clamp((tick - startTick) / (double)durationTicks, 0, 1);
+        var finalScale = Math.Clamp(config.ShrinkFinalScale, 0, 1);
+        var scale = 1 + (finalScale - 1) * progress;
+        var width = arena.Width * scale;
+        var height = arena.Height * scale;
+        return new((arena.Width - width) / 2, (arena.Height - height) / 2, width, height);
+    }
+
+    private static bool OutsideSafeZone(BotState bot, SafeZoneState zone) =>
+        bot.Position.X < zone.X || bot.Position.X > zone.X + zone.Width ||
+        bot.Position.Y < zone.Y || bot.Position.Y > zone.Y + zone.Height;
+
+    private void ApplyShrinkZoneDamage()
+    {
+        if (!config.ShrinkZoneEnabled || config.ShrinkOutsideDamagePerSecond <= 0) return;
+        var startTick = Math.Max(0, (int)Math.Round(config.ShrinkStartSeconds * config.TickRate));
+        if (tick < startTick) return;
+        if ((tick - startTick) % config.TickRate != 0) return;
+
+        var zone = CurrentSafeZone();
+        if (zone is null) return;
+
         for (var i = 0; i < bots.Length; i++)
         {
             if (!IsActive(i)) continue;
-            if (survivor is not null) return false;
-            survivor = bots[i];
+            var bot = bots[i];
+            if (!OutsideSafeZone(bot, zone)) continue;
+            var damage = Math.Min(bot.Hp, config.ShrinkOutsideDamagePerSecond);
+            if (damage <= 0) continue;
+            bots[i] = bot with { Hp = bot.Hp - damage, Speed = bot.Hp == damage ? 0 : bot.Speed };
+            events.Add(new(tick, GameEventType.ZoneDamage, null, bot.Id, null, bot.Position, damage));
+            if (bot.Hp == damage)
+                events.Add(new(tick, GameEventType.BotDestroyed, null, bot.Id, null, bot.Position, damage));
         }
-        Finish(new(survivor?.Id, reason, tick));
+    }
+
+    private bool FinishIfEliminated(MatchEndReason reason)
+    {
+        BotState? survivor = null;
+        string? survivingTeam = null;
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (!IsActive(i)) continue;
+            var team = bots[i].TeamId;
+            if (survivingTeam is null)
+            {
+                survivingTeam = team;
+                survivor = bots[i];
+                continue;
+            }
+            if (survivingTeam != team) return false;
+        }
+        Finish(new(survivor?.Id, reason, tick, survivingTeam));
         return true;
     }
 
@@ -341,9 +417,10 @@ public sealed class Duel : ISimulationEngine
             var hit = double.PositiveInfinity;
             var targetIndex = -1;
             grid.Find(box.Bounds().Union(destination.Bounds()), neighbors);
+            var ownerTeam = bots[FindBot(bullet.OwnerBotId)].TeamId;
             foreach (var candidate in neighbors)
             {
-                if (bots[candidate].Id == bullet.OwnerBotId) continue;
+                if (bots[candidate].Id == bullet.OwnerBotId || bots[candidate].TeamId == ownerTeam) continue;
                 var impact = box.Impact(hulls[candidate], motion);
                 if (impact > 1 || impact > hit || (impact == hit && candidate > targetIndex)) continue;
                 targetIndex = candidate;
