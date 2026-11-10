@@ -3,7 +3,8 @@ import type { Arena, Frame, ReachMarker, Replay } from './contracts';
 import { arenaViewBox } from './ArenaCoordinates';
 import { BlueprintArena, tacticalPhase, tacticalPhaseLabel } from './BlueprintArena';
 import type { CameraMode } from './BlueprintArena';
-import { playShotSound, unlockBattleAudio } from './battleAudio';
+import { AudioControls } from './AudioControls';
+import { useBattleAudio } from './useBattleAudio';
 import { buildShotPlan, directorPlaybackRate, shotAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
 import { botColor, botLabel as rosterBotLabel, resolveTeamId, teamWon } from './botDisplay';
 import { botCssColor, botLabel as cinematicBotLabel } from './botVisuals';
@@ -42,38 +43,15 @@ function collectDamageNumbers(frames: Frame[], index: number, fraction: number) 
   return items;
 }
 
-function ReplayEffectsOverlay({ arena, frame, marker, damageNumbers, finished }: {
+function ReplayEffectsOverlay({ arena, marker, damageNumbers, finished }: {
   arena: Arena;
-  frame: Frame;
   marker?: ReachMarker | null;
   damageNumbers: Array<{ key: string; x: number; y: number; damage: number; age: number; zone: boolean }>;
   finished: boolean;
 }) {
-  if (!frame.safeZone && !marker && damageNumbers.length === 0) return null;
+  if (!marker && damageNumbers.length === 0) return null;
   return (
     <svg className="replay-effects-overlay" viewBox={arenaViewBox(arena.width, arena.height)} aria-hidden="true">
-      {frame.safeZone && (
-        <g className="safe-zone">
-          <path
-            fill="#7a1f2433"
-            d={[
-              `M0 0H${arena.width}V${arena.height}H0Z`,
-              `M${frame.safeZone.x} ${frame.safeZone.y}H${frame.safeZone.x + frame.safeZone.width}V${frame.safeZone.y + frame.safeZone.height}H${frame.safeZone.x}Z`,
-            ].join('')}
-            fillRule="evenodd"
-          />
-          <rect
-            x={frame.safeZone.x}
-            y={frame.safeZone.y}
-            width={frame.safeZone.width}
-            height={frame.safeZone.height}
-            fill="none"
-            stroke="#ff8f8f"
-            strokeWidth=".07"
-            strokeDasharray=".2 .12"
-          />
-        </g>
-      )}
       {marker && (
         <g className="objective-marker">
           <circle cx={marker.x} cy={marker.y} r={marker.radius}
@@ -108,7 +86,6 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
   const [traceBotId, setTraceBotId] = useState(replay.frames[0]?.bots[0]?.id ?? '');
   const heldChronoShots = useRef(new Set<string>());
   const chronoHoldUntil = useRef(0);
-  const lastSoundFrame = useRef(-1);
   const shotPlan = useMemo(() => buildShotPlan(replay), [replay]);
   const botIds = useMemo(() => [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))], [replay]);
   const multiple = botIds.length > 2;
@@ -119,16 +96,22 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
   const lastFrame = replay.frames.length - 1;
   const visualEnd = lastFrame + VISUAL_TAIL_FRAMES;
   const finished = position >= visualEnd;
+  const audio = useBattleAudio(replay, () => ({
+    position,
+    playing: playing && !finished,
+    frozen: showChronoXray && (cameraMode === 'auto' || cameraMode === 'adaptive')
+      && performance.now() < chronoHoldUntil.current,
+    rate: speed * (cameraMode === 'auto' || cameraMode === 'adaptive'
+      ? directorPlaybackRate(shotPlan, position) : 1),
+  }));
 
   useEffect(() => {
     heldChronoShots.current.clear();
     chronoHoldUntil.current = 0;
-    lastSoundFrame.current = -1;
     setPosition(0);
     setPlaying(true);
     setSpeed(0.5);
     setTraceBotId(replay.frames[0]?.bots[0]?.id ?? '');
-    void unlockBattleAudio();
   }, [replay]);
 
   useEffect(() => {
@@ -220,27 +203,12 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
     ? Math.max(0, frame.tick - lastVisibleSample.tick) / replay.tickRate : undefined;
   const formatTrack = (value: number) => `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(2)}`;
   const seekReplay = (nextPosition: number) => {
+    audio.seek(nextPosition);
     setPlaying(false);
     heldChronoShots.current.clear();
     chronoHoldUntil.current = 0;
     setPosition(nextPosition);
   };
-
-  useEffect(() => {
-    if (!playing || finished) return;
-    const previous = lastSoundFrame.current;
-    if (index === previous) return;
-    if (previous >= 0 && index - previous > 4) {
-      lastSoundFrame.current = index;
-      return;
-    }
-    for (let frameIndex = Math.max(0, previous + 1); frameIndex <= index; frameIndex++) {
-      for (const event of replay.frames[frameIndex].events) {
-        if (event.type === 'ShotFired') playShotSound();
-      }
-    }
-    lastSoundFrame.current = index;
-  }, [finished, index, playing, replay.frames]);
 
   return (
     <>
@@ -253,7 +221,6 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
           traceBotId={traceBotId} perceptionBotId={traceBotId} onSeek={seekReplay} />
         <ReplayEffectsOverlay
           arena={replay.arena}
-          frame={frame}
           marker={replay.marker}
           damageNumbers={damageNumbers}
           finished={finished}
@@ -353,12 +320,11 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
       </div>
       <div className="controls replay-controls">
         <button type="button" onClick={() => {
-          void unlockBattleAudio();
           if (finished) {
             heldChronoShots.current.clear();
             chronoHoldUntil.current = 0;
             setPosition(0);
-            lastSoundFrame.current = -1;
+            audio.seek(0);
           }
           setPlaying(finished || !playing);
         }}>{finished ? copy.restart : playing ? copy.pause : copy.resume}</button>
@@ -370,6 +336,7 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
           {speeds.map(value => <option key={value} value={value}>{copy.speedOption(value)}</option>)}
         </select>
       </div>
+      <AudioControls audio={audio} />
       <ul className="health" aria-label={copy.health}>
         {frame.bots.map(bot => {
           const label = displayLabel(bot.id, bot.teamId);
