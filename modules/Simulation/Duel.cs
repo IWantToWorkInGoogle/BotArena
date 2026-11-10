@@ -1,6 +1,9 @@
 namespace BotArena;
 
-public record BotSpawn(string Id, Vec2 Position, double BodyAngle, double TurretAngle);
+public record BotSpawn(string Id, Vec2 Position, double BodyAngle, double TurretAngle)
+{
+    public IMovementModel? Movement { get; init; }
+}
 
 public sealed record MatchConfig(int TickRate, int MaxTicks, ArenaState Arena, IReadOnlyList<BotSpawn> Spawns)
 {
@@ -50,6 +53,7 @@ public sealed class Duel : ISimulationEngine
     private readonly List<GameEvent> events = [];
     private readonly int[] cooldowns;
     private readonly bool[] forfeited;
+    private readonly IMovementModel[] movement;
     private readonly double[] bodyTurnRates;
     private readonly double[] turretTurnRates;
     private int nextBullet;
@@ -62,8 +66,13 @@ public sealed class Duel : ISimulationEngine
         if (config.Spawns.Count < 2)
             throw new ArgumentException("At least two robot spawns are required.", nameof(config));
         this.config = config;
-        bots = config.Spawns.Select(s =>
-            new BotState(s.Id, s.Position, s.BodyAngle, s.TurretAngle, 0, 100, 100, 0)).ToArray();
+        var tracked = new TrackedMovement(config);
+        movement = config.Spawns.Select(spawn => spawn.Movement ?? tracked).ToArray();
+        bots = config.Spawns.Select((s, i) =>
+            new BotState(s.Id, s.Position, s.BodyAngle, s.TurretAngle, 0, 100, 100, 0)
+            {
+                Movement = movement[i].Id,
+            }).ToArray();
         walls = config.Arena.Walls.Select(w =>
             new Hitbox(new(w.X + w.Width / 2, w.Y + w.Height / 2), 0, w.Width, w.Height)).ToArray();
         cooldowns = new int[bots.Length];
@@ -148,7 +157,7 @@ public sealed class Duel : ISimulationEngine
         var index = FindBot(botId);
         if (!IsActive(index)) return;
         forfeited[index] = true;
-        bots[index] = bots[index] with { Speed = 0 };
+        bots[index] = bots[index] with { Speed = 0, Velocity = default };
         FinishIfEliminated(MatchEndReason.BotError);
     }
 
@@ -223,7 +232,7 @@ public sealed class Duel : ISimulationEngine
             if (blocked[i]) return;
             blocked[i] = true;
             bodyTurnRates[i] = 0;
-            next[i] = next[i] with { Position = bots[i].Position, BodyAngle = bots[i].BodyAngle, Speed = 0 };
+            next[i] = next[i] with { Position = bots[i].Position, BodyAngle = bots[i].BodyAngle, Speed = 0, Velocity = default };
             stopped.Enqueue(i);
         }
     }
@@ -237,39 +246,28 @@ public sealed class Duel : ISimulationEngine
     private BotState Advance(int index, BotAction action)
     {
         var bot = bots[index];
-        var left = Track(action.LeftTrack);
-        var right = Track(action.RightTrack);
-        var throttle = (left + right) / 2;
-        var targetSpeed = throttle * (throttle < 0 ? config.MaxReverseSpeed : config.MaxForwardSpeed);
-        var braking = Math.Abs(targetSpeed) < Math.Abs(bot.Speed) || targetSpeed * bot.Speed < 0;
-        var speedDelta = (braking ? config.Deceleration : config.Acceleration) * StepSeconds;
-        var speed = bot.Speed + Math.Clamp(targetSpeed - bot.Speed, -speedDelta, speedDelta);
-        var targetTurnRate = (left - right) * 0.5 * config.MaxTurnSpeed;
-        bodyTurnRates[index] = ApproachTurnRate(bodyTurnRates[index], targetTurnRate);
-        var bodyAngle = NormalizeAngle(bot.BodyAngle + bodyTurnRates[index] * StepSeconds);
+        var current = new BotMotion(bot.BodyAngle, bodyTurnRates[index], bot.Velocity, bot.Speed);
+        var proposed = movement[index].Propose(current, action, bot.Position, StepSeconds, canRotate: true);
         var turretAngle = TurnTurret(index, bot.TurretAngle, action.AimDirection);
-        var hull = Body(bot with { BodyAngle = bodyAngle });
+        var hull = Body(bot with { BodyAngle = proposed.Heading });
         if (!Inside(hull) || WallImpact(hull, default) <= 1)
         {
             hull = Body(bot);
-            bodyAngle = bot.BodyAngle;
-            bodyTurnRates[index] = 0;
+            var straight = movement[index].Propose(current, action, bot.Position, StepSeconds, canRotate: false);
+            proposed = straight with { Heading = current.Heading, TurnRate = 0 };
         }
 
-        var delta = Vec2.FromAngle(bodyAngle) * (speed * StepSeconds);
+        bodyTurnRates[index] = proposed.TurnRate;
+        var delta = proposed.Velocity * StepSeconds;
         var destination = hull with { Center = hull.Center + delta };
         if (!Inside(destination) || WallImpact(hull, delta) <= 1)
-            return bot with { BodyAngle = bodyAngle, TurretAngle = turretAngle, Speed = 0 };
+            return bot with { BodyAngle = proposed.Heading, TurretAngle = turretAngle, Speed = 0, Velocity = default };
 
-        return bot with { Position = destination.Center, BodyAngle = bodyAngle, TurretAngle = turretAngle, Speed = speed };
-    }
-
-    private double ApproachTurnRate(double current, double target)
-    {
-        // Scale the response by elapsed simulation time so changing the tick rate
-        // does not change how quickly the hull and turret respond to a command.
-        var blend = 1 - Math.Exp(-StepSeconds / config.TurnResponseSeconds);
-        return current + (target - current) * blend;
+        return bot with
+        {
+            Position = destination.Center, BodyAngle = proposed.Heading, TurretAngle = turretAngle,
+            Speed = proposed.Speed, Velocity = proposed.Velocity,
+        };
     }
 
     private double TurnTurret(int index, double current, Vec2 aim)
@@ -280,10 +278,10 @@ public sealed class Duel : ISimulationEngine
             return current;
         }
 
-        var remaining = NormalizeAngle(Math.Atan2(aim.Y, aim.X) - current);
+        var remaining = MotionMath.Angle(Math.Atan2(aim.Y, aim.X) - current);
         var limit = config.MaxTurretTurnSpeed;
         var targetRate = Math.Clamp(remaining / StepSeconds, -limit, limit);
-        turretTurnRates[index] = ApproachTurnRate(turretTurnRates[index], targetRate);
+        turretTurnRates[index] = MotionMath.ApproachRate(turretTurnRates[index], targetRate, StepSeconds, config.TurnResponseSeconds);
         var step = turretTurnRates[index] * StepSeconds;
         if (remaining == 0 || (step * remaining > 0 && Math.Abs(step) >= Math.Abs(remaining)))
         {
@@ -291,7 +289,7 @@ public sealed class Duel : ISimulationEngine
             step = remaining;
         }
 
-        return NormalizeAngle(current + step);
+        return MotionMath.Angle(current + step);
     }
 
     private void Fire(int index, BotAction action)
@@ -347,7 +345,9 @@ public sealed class Duel : ISimulationEngine
                 var target = bots[targetIndex];
                 var impact = bullet.Position + motion * hit;
                 var damage = Math.Min(target.Hp, config.BulletDamage);
-                bots[targetIndex] = target with { Hp = target.Hp - damage, Speed = target.Hp == damage ? 0 : target.Speed };
+                bots[targetIndex] = target.Hp == damage
+                    ? target with { Hp = 0, Speed = 0, Velocity = default }
+                    : target with { Hp = target.Hp - damage };
                 if (damage > 0)
                 {
                     events.Add(new(tick, GameEventType.BotHit, bullet.OwnerBotId, target.Id, bullet.Id, impact, damage));
@@ -380,7 +380,4 @@ public sealed class Duel : ISimulationEngine
         foreach (var wall in walls) impact = Math.Min(impact, box.Impact(wall, motion));
         return impact;
     }
-
-    private static double Track(double value) => double.IsFinite(value) ? Math.Clamp(value, -1, 1) : 0;
-    private static double NormalizeAngle(double angle) => Math.Atan2(Math.Sin(angle), Math.Cos(angle));
 }

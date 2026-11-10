@@ -38,18 +38,27 @@ public sealed class JavaScriptBot : IBotRuntime
                         isArray(action) || typeof action.then === 'function') return '';
                     const left = action.leftTrack;
                     const right = action.rightTrack;
-                    const aim = action.aimDirection;
-                    if (aim !== undefined && (aim === null || typeof aim !== 'object' || isArray(aim))) return '';
-                    const x = aim === undefined ? 0 : aim.x;
-                    const y = aim === undefined ? 0 : aim.y;
+                    const readVector = value => {
+                        if (value === undefined) return { __proto__: null, x: 0, y: 0 };
+                        if (value === null || typeof value !== 'object' || isArray(value)) return null;
+                        const x = value.x;
+                        const y = value.y;
+                        return finite(x) && finite(y) ? { __proto__: null, x, y } : null;
+                    };
+                    const aimDirection = readVector(action.aimDirection);
+                    const thrust = readVector(action.thrust);
+                    const turn = action.turn;
                     const shoot = action.shoot;
-                    if ((left !== undefined && !finite(left)) || (right !== undefined && !finite(right)) || !finite(x) || !finite(y) ||
+                    if ((left !== undefined && !finite(left)) || (right !== undefined && !finite(right)) ||
+                        !aimDirection || !thrust || (turn !== undefined && !finite(turn)) ||
                         (shoot !== undefined && typeof shoot !== 'boolean')) return '';
                     return stringify({
                         __proto__: null,
                         leftTrack: min(1, max(-1, left ?? 0)),
                         rightTrack: min(1, max(-1, right ?? 0)),
-                        aimDirection: { __proto__: null, x, y },
+                        aimDirection,
+                        thrust,
+                        turn: min(1, max(-1, turn ?? 0)),
                         shoot: shoot === true
                     });
                 })(JSON.parse, JSON.stringify, Number.isFinite, Array.isArray, Math.min, Math.max)
@@ -75,7 +84,7 @@ public sealed class JavaScriptBot : IBotRuntime
             if (output.Length == 0)
             {
                 throw new StrategyException(
-                    "tick(state) должна вернуть объект с числовыми leftTrack, rightTrack и aimDirection { x, y }, а также логическим shoot.", observation.Tick);
+                    "tick(state) должна вернуть объект с числовыми leftTrack, rightTrack и turn, векторами aimDirection и thrust, а также логическим shoot.", observation.Tick);
             }
             return JsonSerializer.Deserialize<BotAction>(output, Json)!;
         }

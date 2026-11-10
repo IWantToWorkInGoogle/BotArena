@@ -16,6 +16,8 @@ public record ArenaState(double Width, double Height, IReadOnlyList<Wall> Walls)
 public record BotState(string Id, Vec2 Position, double BodyAngle, double TurretAngle,
     double Speed, int Hp, int MaxHp, double ReloadingTime)
 {
+    public Vec2 Velocity { get; init; }
+    public string Movement { get; init; } = "tracked";
     public bool CanShoot => Hp > 0 && ReloadingTime <= 0;
 }
 
@@ -31,7 +33,11 @@ public record BotObservation(int Tick, BotState Self, BotState? Enemy, BulletSta
 {
     public IReadOnlyList<BotState> Enemies { get; init; } = [];
 }
-public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, bool Shoot);
+public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, bool Shoot)
+{
+    public Vec2 Thrust { get; init; }
+    public double Turn { get; init; }
+}
 [JsonConverter(typeof(JsonStringEnumConverter<MatchEndReason>))]
 public enum MatchEndReason { BotDestroyed, TimeLimit, BotError }
 
