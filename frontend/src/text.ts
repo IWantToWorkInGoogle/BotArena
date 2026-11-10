@@ -122,6 +122,22 @@ export const text = {
     column: 'Столбец',
     tick: 'Тик',
   },
+  audio: {
+    title: 'Звук боя',
+    enable: 'Включить звук',
+    disable: 'Выключить звук',
+    starting: 'Включаем звук…',
+    master: 'Общая громкость',
+    mixer: 'Микшер',
+    unavailable: 'Не удалось включить звук. Попробуйте ещё раз или используйте другой браузер.',
+    channels: {
+      engines: 'Двигатели',
+      shots: 'Выстрелы',
+      impacts: 'Попадания и уничтожения',
+      ambience: 'Окружение',
+      music: 'Музыка',
+    },
+  },
   replay: {
     imageLabel: 'Арена матча',
     player: 'Ваш бот',
