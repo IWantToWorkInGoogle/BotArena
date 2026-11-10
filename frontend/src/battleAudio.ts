@@ -27,6 +27,7 @@ export interface AudioTransport {
   rate: number;
   frozen: boolean;
 }
+export interface AudioCapture { stream: MediaStream; release: () => void }
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 
 function seedOf(value: string) {
@@ -116,6 +117,8 @@ export class BattleAudio {
   private buffers = new Map<string, AudioBuffer>();
   private ambience: AudioBufferSourceNode | null = null;
   private ambienceGain: GainNode | null = null;
+  private output: DynamicsCompressorNode | null = null;
+  private recording: MediaStreamAudioDestinationNode | null = null;
   private settings = DEFAULT_AUDIO_SETTINGS;
   private previous: number | null = null;
   private previousTime: number | null = null;
@@ -126,7 +129,7 @@ export class BattleAudio {
   constructor(private readonly replay: Replay) {}
 
   async enable() {
-    if (this.disposed) return;
+    if (this.disposed) return false;
     if (!this.context) {
       const Context = window.AudioContext ?? (window as typeof window & {
         webkitAudioContext?: typeof AudioContext;
@@ -135,24 +138,56 @@ export class BattleAudio {
       this.context = new Context({ latencyHint: 'interactive' });
       this.createGraph();
     }
-    // This is called inside the sound button's user gesture, satisfying autoplay policy.
-    await this.context.resume();
-    if (this.disposed) return;
     this.enabled = true;
+    const context = this.context;
+    // Browsers may leave automatic resume pending until a later user gesture.
+    await context.resume();
+    if (this.disposed) return false;
+    if (!this.enabled) {
+      // A pending autoplay request must not undo a subsequent mute.
+      await context.suspend();
+      return false;
+    }
     this.running = true;
     this.applySettings(this.settings);
+    return true;
   }
 
   disable() {
     this.enabled = false;
+    if (this.context && this.master) {
+      this.master.gain.cancelScheduledValues(this.context.currentTime);
+      this.master.gain.setValueAtTime(0, this.context.currentTime);
+    }
     this.clearVoices();
     this.setRunning(false);
+  }
+
+  async capture(): Promise<AudioCapture> {
+    if (!await this.enable() || !this.context || !this.output) throw new Error('Audio unavailable');
+    if (this.recording) throw new Error('Audio capture already active');
+    const node = this.context.createMediaStreamDestination();
+    const output = this.output;
+    this.recording = node;
+    output.connect(node);
+    let released = false;
+    return { stream: node.stream, release: () => {
+      if (released) return;
+      released = true;
+      try { output.disconnect(node); } catch { /* The replay context may already be closed. */ }
+      node.stream.getTracks().forEach(track => track.stop());
+      if (this.recording === node) this.recording = null;
+    } };
   }
 
   applySettings(settings: AudioSettings) {
     this.settings = settings;
     if (!this.context || !this.master) return;
-    this.smooth(this.master.gain, clamp(settings.master), 0.02);
+    if (this.enabled) this.smooth(this.master.gain, clamp(settings.master), 0.02);
+    else {
+      this.master.gain.cancelScheduledValues(this.context.currentTime);
+      this.master.gain.setValueAtTime(0, this.context.currentTime);
+    }
     for (const channel of AUDIO_CHANNELS) {
       this.smooth(this.buses[channel].gain, clamp(settings.channels[channel]), 0.02);
     }
@@ -203,6 +238,8 @@ export class BattleAudio {
     this.engines.clear();
     this.ambience?.stop();
     this.ambience?.disconnect();
+    this.recording?.stream.getTracks().forEach(track => track.stop());
+    this.recording = null;
     this.buffers.clear();
     if (this.context) void this.context.close().catch(() => {});
     this.context = null;
@@ -224,6 +261,7 @@ export class BattleAudio {
   private createGraph() {
     const ctx = this.context!;
     const compressor = ctx.createDynamicsCompressor();
+    this.output = compressor;
     compressor.threshold.value = -12;
     compressor.knee.value = 16;
     compressor.ratio.value = 5;

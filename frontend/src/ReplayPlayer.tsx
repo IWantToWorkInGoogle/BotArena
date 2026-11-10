@@ -5,6 +5,7 @@ import { BlueprintArena, tacticalPhase, tacticalPhaseLabel } from './BlueprintAr
 import type { CameraMode } from './BlueprintArena';
 import { AudioControls } from './AudioControls';
 import { useBattleAudio } from './useBattleAudio';
+import { useReplayVideo } from './useReplayVideo';
 import { buildShotPlan, directorPlaybackRate, shotAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
 import { botColor, botLabel as rosterBotLabel, resolveTeamId, teamWon } from './botDisplay';
 import { botCssColor, botLabel as cinematicBotLabel } from './botVisuals';
@@ -79,7 +80,7 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(0.5);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('adaptive');
+  const [cameraMode, setCameraMode] = useState<CameraMode>('auto');
   const [showTrails, setShowTrails] = useState(true);
   const [showChronoXray, setShowChronoXray] = useState(true);
   const [showTacticalTrace, setShowTacticalTrace] = useState(true);
@@ -111,12 +112,13 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
     setPosition(0);
     setPlaying(true);
     setSpeed(0.5);
+    setCameraMode('auto');
     setTraceBotId(replay.frames[0]?.bots[0]?.id ?? '');
   }, [replay]);
 
   useEffect(() => {
     if (cameraMode.startsWith('bot:') && !botIds.includes(cameraMode.slice(4))) {
-      setCameraMode('adaptive');
+      setCameraMode('auto');
     }
   }, [botIds, cameraMode]);
 
@@ -175,7 +177,9 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
     : copy.reason[replay.result.reason];
   const activeShot = shotAt(shotPlan, position);
   const cinematicFocus = (cameraMode === 'auto' || cameraMode === 'adaptive')
-    && (activeShot?.kind === 'projectile' || activeShot?.kind === 'impact' || activeShot?.kind === 'finale');
+    && (activeShot?.kind === 'projectile' || activeShot?.kind === 'gunner'
+      || activeShot?.kind === 'impact' || activeShot?.kind === 'finale');
+  const gunnerView = (cameraMode === 'auto' || cameraMode === 'adaptive') && activeShot?.kind === 'gunner';
   const chronoMoment = showChronoXray && (cameraMode === 'auto' || cameraMode === 'adaptive')
     && activeShot?.eventFrame != null
     && (activeShot.kind === 'impact' || activeShot.kind === 'finale')
@@ -202,7 +206,34 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
   const lostContactSeconds = lastVisibleSample
     ? Math.max(0, frame.tick - lastVisibleSample.tick) / replay.tickRate : undefined;
   const formatTrack = (value: number) => `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(2)}`;
+  const resetPlayback = () => {
+    heldChronoShots.current.clear();
+    chronoHoldUntil.current = 0;
+  };
+  const video = useReplayVideo({
+    replay, position, playing, visualEnd, audio,
+    overlay: {
+      title: `BOT ARENA / ${cameraOptions.find(option => option.mode === cameraMode)?.label ?? 'REPLAY'}`,
+      time: copy.time(Math.min(position, lastFrame) / replay.tickRate, lastFrame / replay.tickRate),
+      cue: (cameraMode === 'auto' || cameraMode === 'adaptive') ? activeShot?.label
+        : cameraMode === 'perception' ? `ВОСПРИЯТИЕ · ${cinematicBotLabel(traceBotId, multiple)}`
+        : cameraMode === 'timeline' ? 'БАШНЯ ВРЕМЕНИ' : undefined,
+      badge: chronoMoment ? 'CHRONO X-RAY · TIME LOCK' : gunnerView ? 'GUNNER POV' : undefined,
+      result: position >= lastFrame ? copy.outcome(outcome, reason) : undefined,
+      letterbox: cinematicFocus, gunner: gunnerView,
+      bots: frame.bots.map(bot => ({ label: displayLabel(bot.id, bot.teamId),
+        color: botNames ? botColor(bot, roster) : botCssColor(bot.id), hp: bot.hp, maxHp: bot.maxHp,
+        forfeited: bot.forfeited })),
+    },
+    reset: () => { resetPlayback(); audio.seek(0); setPosition(0); setPlaying(false); },
+    play: () => setPlaying(true),
+    pause: () => setPlaying(false),
+    restore: before => {
+      resetPlayback(); audio.seek(before.position); setPosition(before.position); setPlaying(before.playing);
+    },
+  });
   const seekReplay = (nextPosition: number) => {
+    if (video.busy) return;
     audio.seek(nextPosition);
     setPlaying(false);
     heldChronoShots.current.clear();
@@ -213,18 +244,21 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
   return (
     <>
       <div className={`arena-stage blueprint-stage${cinematicFocus ? ' cinematic-focus' : ''}`
+        + `${video.busy ? ' video-exporting' : ''}`
+        + `${gunnerView ? ' gunner-mode' : ''}`
         + `${cameraMode === 'perception' ? ' perception-mode' : ''}`
         + `${cameraMode === 'timeline' ? ' timeline-mode' : ''}`}>
         <BlueprintArena replay={replay} frame={frame} next={next} fraction={fraction}
           position={position} cameraMode={cameraMode} showTrails={showTrails} shotPlan={shotPlan}
           showChronoXray={showChronoXray} showTacticalTrace={showTacticalTrace}
-          traceBotId={traceBotId} perceptionBotId={traceBotId} onSeek={seekReplay} />
-        <ReplayEffectsOverlay
+          traceBotId={traceBotId} perceptionBotId={traceBotId} onSeek={seekReplay}
+          captureEpoch={video.captureEpoch} captureActive={video.busy} onRenderFrame={video.onRenderFrame} />
+        {!gunnerView && <ReplayEffectsOverlay
           arena={replay.arena}
           marker={replay.marker}
           damageNumbers={damageNumbers}
           finished={finished}
-        />
+        />}
         <div className="blueprint-hud" aria-hidden="true">
           <span>{cameraMode === 'perception' ? `BOT PERCEPTION / ${cinematicBotLabel(traceBotId, multiple)}`
             : cameraMode === 'timeline' ? 'CHRONOSPACE / TIME TOWER'
@@ -237,7 +271,8 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
           <div className="director-cue" aria-hidden="true">
             <span>CUT {String(shotNumber).padStart(2, '0')} / {String(shotPlan.shots.length).padStart(2, '0')}</span>
             <strong>{activeShot.label}</strong>
-            <em>{cameraMode === 'adaptive'
+            <em>{gunnerView ? 'GUNNER POV · ВЫСТРЕЛ'
+              : cameraMode === 'adaptive'
               ? `DYNAMIC SECTION${activeShot.playbackRate < 1 ? ` · ${activeShot.playbackRate.toFixed(2)}×` : ''}`
               : activeShot.playbackRate < 1
               ? `${activeShot.playbackRate.toFixed(2)}× TIME` : 'CINEMA MODE'}</em>
@@ -249,7 +284,7 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
             <span>TIME LOCK · IMPACT VOLUME</span>
           </div>
         )}
-        {showTacticalTrace && cameraMode !== 'perception' && cameraMode !== 'timeline'
+        {showTacticalTrace && !gunnerView && cameraMode !== 'perception' && cameraMode !== 'timeline'
           && traceSample && tracePhase && (
           <div className={`tactical-readout phase-${tracePhase}`} aria-hidden="true">
             <span>TACTICAL TRACE / {cinematicBotLabel(traceBotId, multiple)}</span>
@@ -284,6 +319,7 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
         <div className="blueprint-reticle" aria-hidden="true"><i /><i /></div>
         {finished && <p role="status" className="outcome">{copy.outcome(outcome, reason)}</p>}
       </div>
+      <fieldset className="replay-settings" disabled={video.busy}>
       <div className="director-bar">
         <div className="camera-modes" role="group" aria-label="Режим камеры">
           {cameraOptions.map(({ mode, label }) => (
@@ -320,6 +356,7 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
       </div>
       <div className="controls replay-controls">
         <button type="button" onClick={() => {
+          if (video.busy) return;
           if (finished) {
             heldChronoShots.current.clear();
             chronoHoldUntil.current = 0;
@@ -337,6 +374,21 @@ export function ReplayPlayer({ replay, botNames }: { replay: Replay; botNames?: 
         </select>
       </div>
       <AudioControls audio={audio} />
+      </fieldset>
+      <div className="video-export" aria-label={text.video.title}>
+        <button type="button" className="video-export-start" disabled={!video.supported || video.busy} onClick={video.start}>
+          {video.phase === 'preparing' ? text.video.preparing : video.phase === 'finishing' ? text.video.finishing
+            : video.phase === 'recording' ? text.video.recording(video.progress) : text.video.start}
+        </button>
+        {video.busy && <>
+          <progress aria-label={text.video.title} max="100" value={video.phase === 'finishing' ? 100 : video.progress} />
+          <button type="button" onClick={video.cancel}>{text.video.cancel}</button>
+        </>}
+        {video.url && <a className="video-download" href={video.url} download={video.filename}>{text.video.download}</a>}
+        <small>{!video.supported ? text.video.unsupported : video.busy ? text.video.keepOpen : text.video.description}</small>
+        {video.error && <p role="alert" className="error">{video.error}</p>}
+        {video.phase === 'ready' && <span role="status">{text.video.ready}</span>}
+      </div>
       <ul className="health" aria-label={copy.health}>
         {frame.bots.map(bot => {
           const label = displayLabel(bot.id, bot.teamId);
