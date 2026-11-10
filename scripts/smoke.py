@@ -85,6 +85,19 @@ def main():
     assert status == 200 and match["error"]["line"] is None and match["error"]["column"] is None
     assert "строка" not in match["error"]["message"]
 
+    payload = {
+        "botCode": "function tick() { return { thrust: { x: 0, y: -1 } }; }",
+        "opponentId": "defensive",
+        "movement": "hover",
+    }
+    status, match = request("/api/matches", payload)
+    assert status == 200 and match["error"] is None
+    frames = match["replay"]["frames"]
+    player, opponent = frames[1]["bots"]
+    assert player["movement"] == "hover" and player["velocity"]["y"] < 0
+    assert opponent["movement"] == "tracked"
+    assert request("/api/matches", {**payload, "movement": "unknown"})[0] == 400
+
     print("HTTP smoke checks passed")
 
 

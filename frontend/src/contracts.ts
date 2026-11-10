@@ -1,9 +1,12 @@
 export interface Point { x: number; y: number }
 export interface Wall extends Point { width: number; height: number }
 export interface Arena { width: number; height: number; walls: Wall[] }
+export type Movement = 'tracked' | 'hover';
 export interface Bot {
   id: 'player' | 'opponent';
   position: Point;
+  movement?: Movement;
+  velocity?: Point;
   hp: number;
   maxHp: number;
   bodyAngle: number;

@@ -53,15 +53,27 @@ function ArenaView({ arena, frame, next, fraction, finished, winner }: {
         const hull = angleBetween(bot.bodyAngle, end.bodyAngle, fraction);
         const turret = angleBetween(bot.turretAngle, end.turretAngle, fraction);
         const color = colors[bot.id];
+        const hovering = bot.movement === 'hover';
+        const velocity = bot.velocity && positionBetween(bot.velocity, end.velocity ?? bot.velocity, fraction);
         const won = finished && winner === bot.id;
         const faded = bot.hp === 0 || (finished && winner !== null && !won);
         return (
           <g key={bot.id} transform={`translate(${x} ${y})`} opacity={faded ? 0.35 : 1}
             className={won ? 'winning-bot' : undefined} style={{ color }}>
             {won && <ellipse cx="0" cy="0" rx=".91" ry=".7" fill={`url(#${haloId})`} />}
+            {hovering && velocity && !finished && Math.hypot(velocity.x, velocity.y) > 0.1 &&
+              <line className="hover-trail" x1={-velocity.x * 0.32} y1={-velocity.y * 0.32} x2="0" y2="0"
+                stroke={color} strokeWidth=".055" strokeDasharray=".085 .065" opacity=".85" />}
             <g transform={`rotate(${hull})`}>
-              <rect x="-.34" y="-.29" width=".68" height=".58" rx=".04" fill="#111c2c" stroke={color} strokeWidth=".045" />
-              <path d="M -.29 -.2 H .29 M -.29 .2 H .29" stroke={color} strokeWidth=".045" />
+              {hovering ? (
+                <path className="hover-hull" d="M .34 0 L .21 .29 H -.26 L -.34 .18 V -.18 L -.26 -.29 H .21 Z"
+                  fill="#173242" stroke={color} strokeWidth=".045" />
+              ) : (
+                <>
+                  <rect x="-.34" y="-.29" width=".68" height=".58" rx=".04" fill="#111c2c" stroke={color} strokeWidth=".045" />
+                  <path d="M -.29 -.2 H .29 M -.29 .2 H .29" stroke={color} strokeWidth=".045" />
+                </>
+              )}
             </g>
             <g transform={`rotate(${turret})`}>
               <circle r=".15" fill={color} />

@@ -51,6 +51,8 @@ static IResult? Validate(MatchRequest request)
         return Results.BadRequest(new { error = "Выберите существующего противника." });
     if (request.Language is { } language && !StrategyLanguages.Available().Contains(language))
         return Results.BadRequest(new { error = "Выбранный язык стратегии недоступен." });
+    if (!MovementCatalog.Supports(request.Movement))
+        return Results.BadRequest(new { error = "Выбранная модель движения недоступна." });
     return null;
 }
 

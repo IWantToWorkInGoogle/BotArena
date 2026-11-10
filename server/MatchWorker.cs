@@ -13,14 +13,15 @@ internal static class MatchWorker
     public static async Task<int> RunChildAsync()
     {
         var request = await JsonSerializer.DeserializeAsync<MatchRequest>(Console.OpenStandardInput(), Json);
-        if (request?.BotCode is null || request.OpponentId is null) return 1;
+        if (request?.BotCode is null || request.OpponentId is null || !MovementCatalog.Supports(request.Movement)) return 1;
 
         MatchWorkerResult result;
         try
         {
             using var bot = StrategyLanguages.Create(request.Language, request.BotCode);
             using var opponent = StrategyLanguages.Create(StrategyLanguages.JavaScript, OpponentCatalog.GetCode(request.OpponentId));
-            result = new(Match.Run(MatchConfig.Classic, bot, opponent), null);
+            var config = MovementCatalog.ConfigurePlayer(MatchConfig.Classic, request.Movement);
+            result = new(Match.Run(config, bot, opponent), null);
         }
         catch (StrategyException error)
         {

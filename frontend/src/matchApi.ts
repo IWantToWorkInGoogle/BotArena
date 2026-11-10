@@ -1,4 +1,4 @@
-import type { MatchJobStatus, MatchResponse, ScriptError, StrategyLanguage } from './contracts';
+import type { MatchJobStatus, MatchResponse, Movement, ScriptError, StrategyLanguage } from './contracts';
 import { text } from './text';
 
 export class MatchDiagnosticError extends Error {
@@ -11,13 +11,14 @@ export async function runMatch(
   botCode: string,
   opponentId: string,
   language: StrategyLanguage,
+  movement: Movement,
   signal: AbortSignal,
   onStatus: (status: MatchJobStatus) => void,
 ): Promise<MatchResponse> {
   const response = await fetch('/api/match-jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ botCode, opponentId, language }),
+    body: JSON.stringify({ botCode, opponentId, language, movement }),
     signal,
   });
   if (!response.ok) {

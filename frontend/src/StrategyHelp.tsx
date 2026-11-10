@@ -1,4 +1,4 @@
-import type { StrategyLanguage } from './contracts';
+import type { Movement, StrategyLanguage } from './contracts';
 import { text } from './text';
 
 function Fields({ title, rows }: { title: string; rows: readonly (readonly [string, string, string])[] }) {
@@ -19,13 +19,17 @@ function Fields({ title, rows }: { title: string; rows: readonly (readonly [stri
   );
 }
 
-export function StrategyHelp({ language }: { language: StrategyLanguage }) {
+export function StrategyHelp({ language, movement }: { language: StrategyLanguage; movement: Movement }) {
   return (
     <details>
       <summary>{text.help.title}</summary>
       <p>{language === 'python' ? text.help.pythonIntro : text.help.intro}</p>
       <Fields title={text.help.input} rows={text.help.inputFields} />
-      <Fields title={text.help.output} rows={text.help.outputFields} />
+      {movement === 'hover' && <p>{text.help.hoverIntro}</p>}
+      <Fields title={text.help.output} rows={[
+        ...(movement === 'hover' ? text.help.hoverFields : text.help.trackedFields),
+        ...text.help.sharedFields,
+      ]} />
       <Fields title={text.help.nested} rows={text.help.nestedFields} />
     </details>
   );

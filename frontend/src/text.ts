@@ -11,6 +11,9 @@ export const text = {
   languageLabel: 'Язык стратегии',
   languages,
   strategyLanguage: (language: StrategyLanguage) => `${languages[language]} · tick(state)`,
+  movementLabel: 'Модель движения',
+  movements: { tracked: 'Танк', hover: 'Воздушная подушка' },
+  hoverExampleComment: 'Разгон вверх, поворот корпуса в скольжении, затем торможение.',
   strategyComment: 'Пока цель скрыта, объезжаем стену сверху.',
   opponent: 'Противник',
   opponents: {
@@ -71,15 +74,22 @@ export const text = {
       ['bullets', 'Bullet[]', 'Активные снаряды обоих танков.'],
       ['arena', 'Arena', 'Размеры арены и координаты стен.'],
     ],
-    outputFields: [
+    trackedFields: [
       ['leftTrack?', 'number', 'Тяга левой гусеницы от −1 до 1. По умолчанию 0.'],
       ['rightTrack?', 'number', 'Тяга правой гусеницы от −1 до 1. По умолчанию 0.'],
+    ],
+    sharedFields: [
       ['aimDirection?', 'Vec2', 'Направление башни. Отсутствие поля или { x: 0, y: 0 } сохраняет угол.'],
       ['shoot?', 'boolean', 'Попытка выстрела. По умолчанию false.'],
     ],
+    hoverIntro: 'Голубой след в реплее показывает направление скорости. Поворот корпуса не меняет направление скольжения.',
+    hoverFields: [
+      ['thrust?', 'Vec2', 'Тяга в координатах арены. Длина вектора ограничена единицей. Нулевая тяга оставляет робота скользить.'],
+      ['turn?', 'number', 'Поворот корпуса от −1 до 1. По умолчанию 0.'],
+    ],
     nestedFields: [
       ['Vec2', '{ x: number, y: number }', 'X растёт вправо, Y вниз.'],
-      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
+      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, velocity: Vec2, movement: string, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
       ['Bullet', '{ id: number, ownerBotId: string, position: Vec2, direction: Vec2 }', 'Владелец, координаты и направление снаряда.'],
       ['Arena', '{ width: number, height: number, walls: Wall[] }', 'Размеры арены и прямоугольные препятствия.'],
       ['Wall', '{ x: number, y: number, width: number, height: number }', 'Координаты верхнего левого угла и размеры стены.'],
