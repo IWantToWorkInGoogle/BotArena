@@ -39,70 +39,194 @@ public interface ISimulationEngine
     MatchResult? Result { get; }
 }
 
-public sealed class Duel(MatchConfig config) : ISimulationEngine
+public sealed class Duel : ISimulationEngine
 {
+    private readonly MatchConfig config;
     private double StepSeconds => 1.0 / config.TickRate;
-    private BotState[] bots = config.Spawns.Select(s =>
-        new BotState(s.Id, s.Position, s.BodyAngle, s.TurretAngle, 0, 100, 100, 0)).ToArray();
-    private readonly Hitbox[] walls = config.Arena.Walls.Select(w =>
-        new Hitbox(new(w.X + w.Width / 2, w.Y + w.Height / 2), 0, w.Width, w.Height)).ToArray();
+    private BotState[] bots;
+    private readonly Dictionary<string, int> indices = new(StringComparer.Ordinal);
+    private readonly Hitbox[] walls;
     private readonly List<BulletState> bullets = [];
     private readonly List<GameEvent> events = [];
-    private readonly int[] cooldowns = new int[2];
-    private readonly double[] bodyTurnRates = new double[2];
-    private readonly double[] turretTurnRates = new double[2];
+    private readonly int[] cooldowns;
+    private readonly bool[] forfeited;
+    private readonly double[] bodyTurnRates;
+    private readonly double[] turretTurnRates;
     private int nextBullet;
     private int tick;
+
+    public Duel(MatchConfig config)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(config.TickRate);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(config.MaxTicks);
+        if (config.Spawns.Count < 2)
+            throw new ArgumentException("At least two robot spawns are required.", nameof(config));
+        this.config = config;
+        bots = config.Spawns.Select(s =>
+            new BotState(s.Id, s.Position, s.BodyAngle, s.TurretAngle, 0, 100, 100, 0)).ToArray();
+        walls = config.Arena.Walls.Select(w =>
+            new Hitbox(new(w.X + w.Width / 2, w.Y + w.Height / 2), 0, w.Width, w.Height)).ToArray();
+        cooldowns = new int[bots.Length];
+        forfeited = new bool[bots.Length];
+        bodyTurnRates = new double[bots.Length];
+        turretTurnRates = new double[bots.Length];
+        var grid = new SpatialGrid();
+        var neighbors = new HashSet<int>();
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(bots[i].Id) || !indices.TryAdd(bots[i].Id, i))
+                throw new ArgumentException("Robot IDs must be non-empty and unique.", nameof(config));
+            var hull = Body(bots[i]);
+            if (!Inside(hull) || WallImpact(hull, default) <= 1)
+                throw new ArgumentException("Robot spawns must be clear of walls and inside the arena.", nameof(config));
+            var bounds = hull.Bounds();
+            grid.Find(bounds, neighbors);
+            if (neighbors.Any(j => hull.Impact(Body(bots[j]), default) <= 1))
+                throw new ArgumentException("Robot spawns must not overlap.", nameof(config));
+            grid.Add(i, bounds);
+        }
+    }
 
     public MatchResult? Result { get; private set; }
 
     public BotObservation Observe(string botId)
     {
-        var index = Array.FindIndex(bots, bot => bot.Id == botId);
-        if (index < 0) throw new ArgumentException("Unknown bot ID.", nameof(botId));
-        var self = bots[index];
-        var enemy = bots[1 - index];
+        var self = bots[FindBot(botId)];
         var sightLine = new Hitbox(self.Position, 0, 0, 0);
-        var visible = WallImpact(sightLine, enemy.Position - self.Position) > 1;
-        return new(tick, self, visible ? enemy : null, [.. bullets], config.Arena);
+        var enemies = new List<BotState>();
+        BotState? nearest = null;
+        var nearestDistance = double.PositiveInfinity;
+        for (var i = 0; i < bots.Length; i++)
+        {
+            var candidate = bots[i];
+            if (candidate.Id == botId || !IsActive(i)) continue;
+            var offset = candidate.Position - self.Position;
+            if (WallImpact(sightLine, offset) <= 1) continue;
+            enemies.Add(candidate);
+            var distance = double.Hypot(offset.X, offset.Y);
+            if (nearest is null || distance < nearestDistance)
+            {
+                nearest = candidate;
+                nearestDistance = distance;
+            }
+        }
+
+        return new(tick, self, nearest, [.. bullets], config.Arena) { Enemies = enemies.AsReadOnly() };
     }
 
     public GameFrame CaptureFrame() => new(tick, [.. bots], [.. bullets], [.. events]);
 
     public void Step(IReadOnlyDictionary<string, BotAction> actions)
     {
-        if (Result is not null) throw new InvalidOperationException("The duel is finished.");
-        var firstAction = actions[bots[0].Id];
-        var secondAction = actions[bots[1].Id];
+        EnsureRunning();
+        var commands = new BotAction?[bots.Length];
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (IsActive(i))
+                commands[i] = actions[bots[i].Id];
+        }
         events.Clear();
         tick++;
 
-        var first = Advance(0, firstAction);
-        var second = Advance(1, secondAction);
-        var firstStart = Body(first with { Position = bots[0].Position });
-        var secondStart = Body(second with { Position = bots[1].Position });
-        var relativeMotion = (first.Position - bots[0].Position) - (second.Position - bots[1].Position);
-        if (firstStart.Impact(secondStart, relativeMotion) <= 1)
-        {
-            Array.Clear(bodyTurnRates);
-            first = first with { Position = bots[0].Position, BodyAngle = bots[0].BodyAngle, Speed = 0 };
-            second = second with { Position = bots[1].Position, BodyAngle = bots[1].BodyAngle, Speed = 0 };
-        }
-        bots = [first, second];
-        Fire(0, firstAction);
-        Fire(1, secondAction);
+        var next = (BotState[])bots.Clone();
+        for (var i = 0; i < bots.Length; i++)
+            if (commands[i] is { } action) next[i] = Advance(i, action);
+        ResolveMovement(next);
+        bots = next;
+
+        for (var i = 0; i < bots.Length; i++)
+            if (commands[i] is { } action) Fire(i, action);
         AdvanceBullets();
 
-        var destroyed = bots.Any(b => b.Hp == 0);
-        if (destroyed || tick == config.MaxTicks)
-        {
-            string? winner = !destroyed || bots.All(b => b.Hp == 0) ? null : bots.Single(b => b.Hp > 0).Id;
-            Finish(new(winner, destroyed ? MatchEndReason.BotDestroyed : MatchEndReason.TimeLimit, tick));
-        }
+        if (!FinishIfEliminated(MatchEndReason.BotDestroyed) && tick == config.MaxTicks)
+            Finish(new(null, MatchEndReason.TimeLimit, tick));
     }
 
-    public void Forfeit(string botId) =>
-        Finish(new(bots.Single(bot => bot.Id != botId).Id, MatchEndReason.BotError, tick));
+    public void Forfeit(string botId)
+    {
+        EnsureRunning();
+        var index = FindBot(botId);
+        if (!IsActive(index)) return;
+        forfeited[index] = true;
+        bots[index] = bots[index] with { Speed = 0 };
+        FinishIfEliminated(MatchEndReason.BotError);
+    }
+
+    private bool IsActive(int index) => !forfeited[index] && bots[index].Hp > 0;
+
+    private int FindBot(string id) => indices.TryGetValue(id, out var index)
+        ? index : throw new ArgumentException("Unknown bot ID.", nameof(id));
+
+    private void EnsureRunning()
+    {
+        if (Result is not null) throw new InvalidOperationException("The match is finished.");
+    }
+
+    private bool FinishIfEliminated(MatchEndReason reason)
+    {
+        BotState? survivor = null;
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (!IsActive(i)) continue;
+            if (survivor is not null) return false;
+            survivor = bots[i];
+        }
+        Finish(new(survivor?.Id, reason, tick));
+        return true;
+    }
+
+    private void ResolveMovement(BotState[] next)
+    {
+        var grid = new SpatialGrid();
+        var start = new Hitbox[bots.Length];
+        var motion = new Vec2[bots.Length];
+        var bounds = new Bounds[bots.Length];
+        var blocked = new bool[bots.Length];
+        var stopped = new Queue<int>();
+        var neighbors = new HashSet<int>();
+
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (!IsActive(i)) continue;
+            var oldHull = Body(bots[i]);
+            start[i] = Body(next[i]) with { Center = oldHull.Center };
+            motion[i] = next[i].Position - bots[i].Position;
+            bounds[i] = oldHull.Bounds().Union(start[i].Bounds()).Union(Body(next[i]).Bounds());
+            grid.Add(i, bounds[i]);
+        }
+
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (!IsActive(i)) continue;
+            grid.Find(bounds[i], neighbors);
+            foreach (var j in neighbors)
+            {
+                if (j <= i || start[i].Impact(start[j], motion[i] - motion[j]) > 1) continue;
+                Block(i);
+                Block(j);
+            }
+        }
+
+        // A canceled move leaves its old hull in the way of robots that expected it
+        // to move. Recheck only those neighbors until no additional move is canceled.
+        while (stopped.TryDequeue(out var i))
+        {
+            var oldHull = Body(bots[i]);
+            grid.Find(oldHull.Bounds(), neighbors);
+            foreach (var j in neighbors)
+                if (!blocked[j] && start[j].Impact(oldHull, motion[j]) <= 1)
+                    Block(j);
+        }
+
+        void Block(int i)
+        {
+            if (blocked[i]) return;
+            blocked[i] = true;
+            bodyTurnRates[i] = 0;
+            next[i] = next[i] with { Position = bots[i].Position, BodyAngle = bots[i].BodyAngle, Speed = 0 };
+            stopped.Enqueue(i);
+        }
+    }
 
     private void Finish(MatchResult result)
     {
@@ -187,22 +311,43 @@ public sealed class Duel(MatchConfig config) : ISimulationEngine
 
     private void AdvanceBullets()
     {
+        if (bullets.Count == 0) return;
         var survivors = new List<BulletState>();
+        var grid = new SpatialGrid();
+        var hulls = new Hitbox[bots.Length];
+        var neighbors = new HashSet<int>();
+        for (var i = 0; i < bots.Length; i++)
+        {
+            if (!IsActive(i)) continue;
+            hulls[i] = Body(bots[i]);
+            grid.Add(i, hulls[i].Bounds());
+        }
+
         foreach (var bullet in bullets)
         {
             var motion = bullet.Direction * (config.BulletSpeed * StepSeconds);
             var box = new Hitbox(bullet.Position, Math.Atan2(bullet.Direction.Y, bullet.Direction.X),
                 config.BulletLength, config.BulletWidth);
-            var targetIndex = bots[0].Id == bullet.OwnerBotId ? 1 : 0;
-            var target = bots[targetIndex];
-            var hit = box.Impact(Body(target), motion);
+            var destination = box with { Center = bullet.Position + motion };
             var wall = WallImpact(box, motion);
+            var hit = double.PositiveInfinity;
+            var targetIndex = -1;
+            grid.Find(box.Bounds().Union(destination.Bounds()), neighbors);
+            foreach (var candidate in neighbors)
+            {
+                if (bots[candidate].Id == bullet.OwnerBotId) continue;
+                var impact = box.Impact(hulls[candidate], motion);
+                if (impact > 1 || impact > hit || (impact == hit && candidate > targetIndex)) continue;
+                targetIndex = candidate;
+                hit = impact;
+            }
 
             if (hit <= 1 && hit < wall)
             {
+                var target = bots[targetIndex];
                 var impact = bullet.Position + motion * hit;
                 var damage = Math.Min(target.Hp, config.BulletDamage);
-                bots[targetIndex] = target with { Hp = target.Hp - damage };
+                bots[targetIndex] = target with { Hp = target.Hp - damage, Speed = target.Hp == damage ? 0 : target.Speed };
                 if (damage > 0)
                 {
                     events.Add(new(tick, GameEventType.BotHit, bullet.OwnerBotId, target.Id, bullet.Id, impact, damage));
@@ -210,7 +355,7 @@ public sealed class Duel(MatchConfig config) : ISimulationEngine
                         events.Add(new(tick, GameEventType.BotDestroyed, bullet.OwnerBotId, target.Id, bullet.Id, impact));
                 }
             }
-            else if (wall > 1 && Inside(box with { Center = bullet.Position + motion }))
+            else if (wall > 1 && Inside(destination))
             {
                 survivors.Add(bullet with { Position = bullet.Position + motion });
             }
