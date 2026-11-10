@@ -8,9 +8,9 @@ export function AudioControls({ audio }: { audio: ReturnType<typeof useBattleAud
   return (
     <div className="audio-controls" role="group" aria-label={copy.title}>
       <button type="button" className={audio.enabled ? 'audio-toggle active' : 'audio-toggle'}
-        aria-pressed={audio.enabled} disabled={audio.busy} onClick={() => void audio.toggle()}>
+        aria-pressed={audio.enabled} onClick={audio.toggle}>
         <span className="audio-indicator" aria-hidden="true" />
-        {audio.busy ? copy.starting : audio.enabled ? copy.disable : copy.enable}
+        {audio.enabled ? copy.disable : copy.enable}
       </button>
       <Volume label={copy.master} value={audio.settings.master} onChange={audio.setMaster} />
       <details className="audio-mixer">
@@ -22,6 +22,8 @@ export function AudioControls({ audio }: { audio: ReturnType<typeof useBattleAud
           ))}
         </div>
       </details>
+      {audio.enabled && audio.awaitingGesture && !audio.error
+        && <span role="status" className="audio-hint">{copy.awaitingGesture}</span>}
       {audio.error && <span role="status" className="audio-error">{audio.error}</span>}
     </div>
   );

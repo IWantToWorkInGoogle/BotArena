@@ -249,6 +249,12 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 .blueprint-reticle i { position: absolute; background: #73ddff; }
 .blueprint-reticle i:first-child { left: 0; top: 50%; width: 100%; height: 1px; }
 .blueprint-reticle i:last-child { left: 50%; top: 0; width: 1px; height: 100%; }
+.gunner-mode .blueprint-reticle {
+  width: 3.4rem;
+  height: 2.6rem;
+  border: 1px solid #73ddff65;
+  opacity: .9;
+}
 .director-cue {
   position: absolute;
   z-index: 6;
@@ -485,6 +491,14 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 .audio-channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .8rem 1.5rem; margin-top: .9rem; padding-bottom: .25rem; }
 .audio-channels .audio-volume { grid-template-columns: minmax(6rem, 1fr) minmax(4rem, 1fr) 3rem; }
 .audio-error { color: #ffb99a; font-size: .85rem; }
+.audio-hint { color: #8da9b9; font-size: .8rem; }
+.replay-settings { border: 0; margin: 0; padding: 0; min-width: 0; }
+.video-exporting .blueprint-viewport { aspect-ratio: 16 / 9; max-height: none; }
+.video-export { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .7rem; }
+.video-export small { flex: 1 1 100%; color: #8da9b9; font-size: .8rem; }
+.video-export progress { width: min(14rem, 35%); accent-color: #61d8ed; }
+.video-download { color: #87e3ee; padding: .5rem .65rem; border: 1px solid #3a899b; border-radius: .35rem; text-decoration: none; }
+.video-export [role="status"] { color: #8bdfb8; font-size: .85rem; }
 .replay-controls { margin-top: .55rem; }
 .replay-controls button { min-width: 6.4rem; }
 .webgl-error {

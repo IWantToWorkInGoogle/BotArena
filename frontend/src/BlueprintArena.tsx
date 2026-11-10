@@ -8,6 +8,8 @@ import { createPerceptionRig, updatePerceptionRig } from './perceptionLayer';
 import type { LastKnownTarget } from './perceptionLayer';
 import { createTimeTower, updateTimeTower } from './timeTower';
 import { createSafeZoneRig, updateSafeZoneRig } from './safeZoneLayer';
+import { gunnerPose } from './gunnerCamera';
+import { VIDEO_WIDTH, VIDEO_HEIGHT } from './replayVideo';
 
 export type CameraMode = 'auto' | 'adaptive' | 'plan' | 'overview' | 'perception' | 'timeline' | `bot:${string}`;
 
@@ -29,6 +31,9 @@ interface RenderState {
   perceptionBotId: string;
   onSeek: (position: number) => void;
   shotPlan: ShotPlan;
+  captureEpoch: number;
+  captureActive: boolean;
+  onRenderFrame?: (canvas: HTMLCanvasElement, epoch: number) => void;
 }
 
 interface TankRig {
@@ -43,6 +48,7 @@ interface TankRig {
 interface ReplayEffect {
   frame: number;
   type: string;
+  sourceBotId?: string;
   group: THREE.Group;
   materials: THREE.MeshBasicMaterial[];
   lights: THREE.PointLight[];
@@ -561,7 +567,7 @@ function createEffect(replay: Replay, event: Frame['events'][number], frame: num
   }
 
   group.visible = false;
-  return { frame, type: event.type, group, materials, lights };
+  return { frame, type: event.type, sourceBotId: event.sourceBotId ?? undefined, group, materials, lights };
 }
 
 function interpolatedBot(state: RenderState, id: Bot['id']): Bot | undefined {
@@ -606,6 +612,9 @@ export function BlueprintArena({
   perceptionBotId,
   onSeek,
   shotPlan,
+  captureEpoch = 0,
+  captureActive = false,
+  onRenderFrame,
 }: {
   replay: Replay;
   frame: Frame;
@@ -620,21 +629,24 @@ export function BlueprintArena({
   perceptionBotId: string;
   onSeek: (position: number) => void;
   shotPlan: ShotPlan;
+  captureEpoch?: number;
+  captureActive?: boolean;
+  onRenderFrame?: (canvas: HTMLCanvasElement, epoch: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const renderState = useRef<RenderState>({
     frame, next, fraction, position, cameraMode, showTrails,
-    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan,
+    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan, captureEpoch, captureActive, onRenderFrame,
   });
   const [webglError, setWebglError] = useState(false);
 
   useEffect(() => {
     renderState.current = {
       frame, next, fraction, position, cameraMode, showTrails,
-      showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan,
+      showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan, captureEpoch, captureActive, onRenderFrame,
     };
   }, [frame, next, fraction, position, cameraMode, showTrails,
-    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan]);
+    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan, captureEpoch, captureActive, onRenderFrame]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -891,6 +903,12 @@ export function BlueprintArena({
       let fov = 38;
 
       outputUp.set(0, 1, 0);
+      if (shot.kind === 'gunner' && subject) {
+        const pose = gunnerPose(subject, replay.arena, shot.focus, shot.eventFrame ?? shot.startFrame, timelinePosition);
+        outputPosition.set(pose.position.x, pose.position.y, pose.position.z);
+        outputTarget.set(pose.target.x, pose.target.y, pose.target.z);
+        return pose.fov;
+      }
       if (shot.kind === 'projectile' && subjectPosition && subject) {
         const forward = new THREE.Vector3(Math.cos(subject.turretAngle), 0, Math.sin(subject.turretAngle));
         const shoulder = new THREE.Vector3(-forward.z, 0, forward.x).multiplyScalar(
@@ -1128,8 +1146,10 @@ export function BlueprintArena({
       return pose.fov;
     };
     const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
+      const recording = renderState.current.captureActive;
+      const width = recording ? VIDEO_WIDTH : Math.max(1, host.clientWidth);
+      const height = recording ? VIDEO_HEIGHT : Math.max(1, host.clientHeight);
+      renderer.setPixelRatio(recording ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
@@ -1164,6 +1184,8 @@ export function BlueprintArena({
     const clock = new THREE.Clock();
     let animationFrame = 0;
     let activeDirectorShotId = '';
+    let lastCaptureEpoch = 0;
+    let renderingCapture = false;
     let adaptiveShotId = '';
     let adaptivePose: AdaptivePose | undefined;
     let activeChronoShotId = '';
@@ -1174,13 +1196,21 @@ export function BlueprintArena({
     const render = () => {
       animationFrame = requestAnimationFrame(render);
       const state = renderState.current;
+      if (renderingCapture !== state.captureActive) { renderingCapture = state.captureActive; resize(); }
       const delta = Math.min(clock.getDelta(), 0.05);
+      const resetCaptureCamera = state.captureEpoch !== lastCaptureEpoch;
+      if (resetCaptureCamera) {
+        lastCaptureEpoch = state.captureEpoch;
+        activeDirectorShotId = ''; adaptiveShotId = ''; adaptivePose = undefined;
+      }
       updateSafeZoneRig(safeZoneRig, replay.arena, state.frame.safeZone, state.next.safeZone, state.fraction);
       const currentBots = new Map<string, Bot>();
       const perceptionMode = state.cameraMode === 'perception';
       const timelineMode = state.cameraMode === 'timeline';
       const director = state.cameraMode === 'auto' || state.cameraMode === 'adaptive'
         ? directorStateAt(state.shotPlan, state.position) : undefined;
+      const gunnerSubjectId = director?.shot?.kind === 'gunner' ? director.shot.subject : undefined;
+      const gunnerActive = gunnerSubjectId != null;
       const chronoEventFrame = director?.shot?.eventFrame;
       const chronoActive = state.showChronoXray
         && chronoEventFrame != null
@@ -1311,7 +1341,7 @@ export function BlueprintArena({
       }
 
       tacticalTraces.forEach(trace => {
-        const visible = state.showTacticalTrace && !perceptionMode && !timelineMode
+        const visible = state.showTacticalTrace && !perceptionMode && !timelineMode && !gunnerActive
           && trace.botId === state.traceBotId;
         trace.group.visible = visible;
         if (!visible) return;
@@ -1398,7 +1428,7 @@ export function BlueprintArena({
 
       const currentFrame = Math.min(replay.frames.length, Math.floor(state.position) + 1);
       trailLines.forEach(line => {
-        line.visible = state.showTrails && !perceptionMode && !timelineMode;
+        line.visible = state.showTrails && !perceptionMode && !timelineMode && !gunnerActive;
         line.geometry.setDrawRange(0, currentFrame);
       });
 
@@ -1412,7 +1442,8 @@ export function BlueprintArena({
         const muzzle = effect.type === 'ShotFired';
         const scale = effect.type === 'BotDestroyed' ? 0.8 + progress * 5.2
           : muzzle ? 0.72 + progress * 2.1 : 0.65 + progress * 2.6;
-        effect.group.scale.setScalar(scale);
+        const ownGunnerFlash = muzzle && gunnerActive && effect.sourceBotId === gunnerSubjectId;
+        effect.group.scale.setScalar(scale * (ownGunnerFlash ? 0.52 : 1));
         effect.group.rotation.y = progress * Math.PI * 2.2;
         effect.materials.forEach(material => {
           material.opacity = Math.pow(1 - progress, muzzle ? 2 : 1) * (muzzle ? 1 : 0.9);
@@ -1425,7 +1456,7 @@ export function BlueprintArena({
       const arenaCenter = new THREE.Vector3(0, 0, 0);
       const mode = state.cameraMode;
       let desiredFov = 38;
-      let hardDirectorCut = false;
+      let hardDirectorCut = resetCaptureCamera;
 
       if (mode === 'timeline') {
         desiredTarget.set(0, timeTowerRig.height * 0.46, 0);
@@ -1473,12 +1504,12 @@ export function BlueprintArena({
       } else {
         if (director?.shot) {
           const changedShot = activeDirectorShotId !== director.shot.id;
-          hardDirectorCut = changedShot && (director.shot.hardCut || activeDirectorShotId === '');
+          hardDirectorCut ||= changedShot && (director.shot.hardCut || activeDirectorShotId === '');
           activeDirectorShotId = director.shot.id;
           desiredFov = setDirectorGoal(
             director.shot, currentBots, state, state.position, desiredPosition, desiredTarget, desiredUp,
           );
-          if (mode === 'adaptive') {
+          if (mode === 'adaptive' && !gunnerActive) {
             if (adaptiveShotId !== director.shot.id || !adaptivePose) {
               adaptivePose = selectAdaptivePose(director.shot, state, desiredTarget);
               adaptiveShotId = director.shot.id;
@@ -1517,7 +1548,7 @@ export function BlueprintArena({
 
       const directorMode = mode === 'auto' || mode === 'adaptive';
       const smoothing = 1 - Math.exp(-delta * (mode === 'auto' ? 2.35 : mode === 'adaptive' ? 3.1 : 4.2));
-      if (hardDirectorCut) {
+      if (hardDirectorCut || gunnerActive) {
         camera.position.copy(desiredPosition);
         cameraTarget.copy(desiredTarget);
         camera.up.copy(desiredUp).normalize();
@@ -1544,7 +1575,7 @@ export function BlueprintArena({
       if (!cutawayTargets.length) cutawayTargets.push(cameraTarget.clone());
       const wallFade = 1 - Math.exp(-delta * 8.5);
       for (const wall of wallRigs) {
-        const cut = (mode === 'adaptive' || chronoActive)
+        const cut = ((mode === 'adaptive' && !gunnerActive) || chronoActive)
           && cutawayTargets.some(target => wallBlocks(camera.position, target, wall.box));
         const surfaceOpacity = timelineMode ? 0.14 : cut ? 0.07 : 1;
         const edgeOpacity = timelineMode ? 0.42 : cut ? 1 : 0.88;
@@ -1559,6 +1590,7 @@ export function BlueprintArena({
         wall.surface.depthWrite = wall.surface.opacity > 0.42;
       }
       renderer.render(scene, camera);
+      state.onRenderFrame?.(renderer.domElement, state.captureEpoch);
     };
 
     render();

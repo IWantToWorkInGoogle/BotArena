@@ -3,7 +3,7 @@ import { botDirectorLabel } from './botVisuals';
 
 export const VISUAL_TAIL_FRAMES = 15;
 
-export type ShotKind = 'establishing' | 'duel' | 'follow' | 'projectile' | 'impact' | 'finale';
+export type ShotKind = 'establishing' | 'duel' | 'follow' | 'projectile' | 'gunner' | 'impact' | 'finale';
 
 export interface CinematicShot {
   id: string;
@@ -275,6 +275,86 @@ function fillerShots(startFrame: number, endFrame: number, serial: number, botId
   return result;
 }
 
+type PlannedShot = Omit<CinematicShot, 'id' | 'azimuth'>;
+
+function gunnerFocus(replay: Replay, subjectId: string, start: number, eventFrame: number, end: number) {
+  const bots = frameBots(replay, eventFrame);
+  const subject = bots.find(bot => bot.id === subjectId);
+  if (!subject || subject.hp <= 0 || subject.forfeited) return;
+  const targets = bots.filter(bot => bot.id !== subjectId && bot.hp > 0 && !bot.forfeited
+    && (!bot.teamId || bot.teamId !== subject.teamId));
+  const target = targets.filter(bot => {
+    const dx = bot.position.x - subject.position.x;
+    const dy = bot.position.y - subject.position.y;
+    return Math.hypot(dx, dy) >= 2.3
+      && angularDistance(Math.atan2(dy, dx), subject.turretAngle) < 0.2;
+  }).sort((a, b) => Math.hypot(a.position.x - subject.position.x, a.position.y - subject.position.y)
+    - Math.hypot(b.position.x - subject.position.x, b.position.y - subject.position.y))[0];
+  if (!target) return;
+  let previousAngle: number | undefined;
+  // Validate the entire insert, including anticipation and interpolation endpoints.
+  for (let i = Math.floor(start); i <= Math.ceil(end); i++) {
+    const frame = replay.frames[Math.min(i, replay.frames.length - 1)];
+    const shooter = frame.bots.find(bot => bot.id === subjectId);
+    const victim = frame.bots.find(bot => bot.id === target.id);
+    if (!shooter || shooter.hp <= 0 || shooter.forfeited || !victim || victim.hp <= 0) return;
+    if (previousAngle != null && angularDistance(shooter.turretAngle, previousAngle) > 0.12) return;
+    previousAngle = shooter.turretAngle;
+    const eye = { x: shooter.position.x + Math.cos(shooter.turretAngle) * 0.08,
+      y: shooter.position.y + Math.sin(shooter.turretAngle) * 0.08 };
+    if (eye.x < 0.15 || eye.y < 0.15 || eye.x > replay.arena.width - 0.15
+      || eye.y > replay.arena.height - 0.15) return;
+    if (replay.arena.walls.some(wall => pointInsideWall(eye, wall, 0.12)
+      || segmentHitsWall(eye, victim.position, wall))) return;
+    const bearing = Math.atan2(victim.position.y - eye.y, victim.position.x - eye.x);
+    if (angularDistance(bearing, shooter.turretAngle) > 0.3) return;
+  }
+  return target.position;
+}
+
+function addGunnerInserts(replay: Replay, shots: PlannedShot[]): PlannedShot[] {
+  const result = shots.slice();
+  const lastFrame = replay.frames.length - 1;
+  // A second insert is available a little earlier, but external coverage stays dominant.
+  const maximum = lastFrame >= replay.tickRate * 12 ? 2 : 1;
+  let count = 0;
+  let lastInsert = -Infinity;
+  let budget = Math.floor(lastFrame * 0.1);
+  const opening = Math.min(replay.tickRate * 1.2, lastFrame * 0.2);
+  for (let frameIndex = 0; frameIndex < replay.frames.length && count < maximum; frameIndex++) {
+    if (frameIndex - lastInsert < replay.tickRate * 6) continue;
+    for (const event of replay.frames[frameIndex].events) {
+      if (count >= maximum || event.type !== 'ShotFired' || !event.sourceBotId) continue;
+      const index = result.findIndex(shot => shot.startFrame <= frameIndex && frameIndex < shot.endFrame);
+      const shot = result[index];
+      if (!shot || !['establishing', 'duel', 'follow', 'projectile'].includes(shot.kind)) continue;
+      if (shot.kind === 'projectile' && shot.bulletId !== event.bulletId) continue;
+      const start = Math.max(shot.startFrame, frameIndex - 2);
+      const end = Math.min(shot.endFrame, frameIndex + 4, start + budget);
+      if (start < opening || end - start < 4 || end < frameIndex + 2) continue;
+      const focus = gunnerFocus(replay, event.sourceBotId, start, frameIndex, end);
+      if (!focus) continue;
+      const replacement: PlannedShot[] = [];
+      if (start > shot.startFrame) replacement.push({ ...shot, endFrame: start });
+      replacement.push({
+        kind: 'gunner', startFrame: start, endFrame: end, eventFrame: frameIndex,
+        subject: event.sourceBotId, focus, bulletId: event.bulletId ?? undefined,
+        label: `ОТ ЛИЦА НАВОДЧИКА · ${botDirectorLabel(event.sourceBotId, frameBots(replay, frameIndex).length > 2)}`,
+        playbackRate: 0.5, hardCut: true, transitionFrames: 0,
+      });
+      if (end < shot.endFrame) replacement.push({ ...shot, startFrame: end, hardCut: true, transitionFrames: 0 });
+      result.splice(index, 1, ...replacement);
+      count += 1;
+      lastInsert = frameIndex;
+      budget -= end - start;
+      break;
+    }
+  }
+  // Never interpolate the external camera through the turret when leaving POV.
+  return result.map((shot, index) => result[index - 1]?.kind === 'gunner'
+    ? { ...shot, hardCut: true, transitionFrames: 0 } : shot);
+}
+
 export function buildShotPlan(replay: Replay): ShotPlan {
   const lastFrame = Math.max(0, replay.frames.length - 1);
   if (lastFrame === 0) return { shots: [], lastFrame };
@@ -304,7 +384,7 @@ export function buildShotPlan(replay: Replay): ShotPlan {
   raw.push(...fillerShots(cursor, lastFrame, fillerSerial, botIds));
 
   let previousAzimuth = 0.75;
-  const shots = raw.filter(shot => shot.endFrame - shot.startFrame > 0.01).map((shot, index) => {
+  const shots = addGunnerInserts(replay, raw).filter(shot => shot.endFrame - shot.startFrame > 0.01).map((shot, index) => {
     const azimuth = chooseAzimuth(replay, shot, previousAzimuth);
     previousAzimuth = azimuth;
     return { ...shot, id: `shot-${String(index + 1).padStart(2, '0')}`, azimuth };

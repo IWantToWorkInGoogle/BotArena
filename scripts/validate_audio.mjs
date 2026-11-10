@@ -79,6 +79,28 @@ try {
           })),
         })),
       };
+      const pendingAudio = new BattleAudio(replay);
+      try {
+        const pendingStart = pendingAudio.enable();
+        pendingAudio.disable();
+        check(await pendingStart === false && pendingAudio.context.state === 'suspended',
+          'Mute cancels a pending audio start');
+        pendingAudio.applySettings(DEFAULT_AUDIO_SETTINGS);
+        const probe = pendingAudio.context.createOscillator();
+        const mutedAnalyser = pendingAudio.context.createAnalyser();
+        probe.connect(pendingAudio.master);
+        pendingAudio.master.connect(mutedAnalyser);
+        probe.start();
+        // Simulate a browser finally granting an old resume request after mute.
+        await pendingAudio.context.resume();
+        const deadline = performance.now() + 3000;
+        while (pendingAudio.context.currentTime < 0.12 && performance.now() < deadline) await wait(15);
+        const mutedSamples = new Float32Array(mutedAnalyser.fftSize);
+        mutedAnalyser.getFloatTimeDomainData(mutedSamples);
+        check(mutedSamples.every(value => Math.abs(value) < 0.00001),
+          'Changing mixer settings cannot unmute a disabled audio graph');
+        probe.stop(); probe.disconnect(); mutedAnalyser.disconnect();
+      } finally { pendingAudio.dispose(); }
       check(eventsBetween(replay, 0.8, 4.2).length === 4, 'All events between rendered frames are collected');
       check(eventsBetween(replay, 1.2, 1.9).length === 0, 'Fractional frames do not repeat events');
       check(eventsBetween(replay, 6, 3).length === 0, 'Reverse seek does not emit events');
