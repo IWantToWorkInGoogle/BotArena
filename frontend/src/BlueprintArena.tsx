@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import type { Bot, Frame, Point, Replay } from './contracts';
+import type { BehaviorSample, Bot, Frame, Point, Replay } from './contracts';
 import { directorStateAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
 import type { CinematicShot, ShotPlan } from './cinematicDirector';
 import { botColor } from './botVisuals';
+import { createPerceptionRig, updatePerceptionRig } from './perceptionLayer';
+import type { LastKnownTarget } from './perceptionLayer';
+import { createTimeTower, updateTimeTower } from './timeTower';
 
-export type CameraMode = 'auto' | 'adaptive' | 'plan' | 'overview' | `bot:${string}`;
+export type CameraMode = 'auto' | 'adaptive' | 'plan' | 'overview' | 'perception' | 'timeline' | `bot:${string}`;
 
 const palette = {
   grid: 0x1f759b,
@@ -19,6 +22,11 @@ interface RenderState {
   position: number;
   cameraMode: CameraMode;
   showTrails: boolean;
+  showChronoXray: boolean;
+  showTacticalTrace: boolean;
+  traceBotId: string;
+  perceptionBotId: string;
+  onSeek: (position: number) => void;
   shotPlan: ShotPlan;
 }
 
@@ -63,6 +71,23 @@ interface BulletFlight {
   endFrame: number;
   start: Point;
   end: Point;
+}
+
+interface GhostRig {
+  hulls: THREE.InstancedMesh;
+  turrets: THREE.InstancedMesh;
+}
+
+export type TacticalPhase = 'search' | 'approach' | 'aim' | 'fire';
+
+interface TacticalTraceRig {
+  botId: string;
+  group: THREE.Group;
+  aimGroup: THREE.Group;
+  ribbon: THREE.Mesh;
+  centerLine: THREE.Line;
+  markers: Array<{ tick: number; group: THREE.Group }>;
+  samples: BehaviorSample[];
 }
 
 function mixPoint(start: Point, end: Point, fraction: number): Point {
@@ -287,6 +312,191 @@ function createGrid(replay: Replay): THREE.Group {
   return group;
 }
 
+export function tacticalPhase(sample: BehaviorSample): TacticalPhase {
+  if (sample.action.shoot) return 'fire';
+  if (!sample.enemyVisible) return 'search';
+  const aim = sample.action.aimDirection;
+  const aimAngle = Math.atan2(aim.y, aim.x);
+  const aimError = Math.abs(Math.atan2(
+    Math.sin(aimAngle - sample.turretAngle), Math.cos(aimAngle - sample.turretAngle),
+  ));
+  const throttle = actionThrottle(sample.action);
+  if (aimError > 0.08 || throttle < 0.12) return 'aim';
+  return 'approach';
+}
+
+function actionThrottle(action: BehaviorSample['action']) {
+  const tracked = Math.abs((action.leftTrack + action.rightTrack) / 2);
+  const thrust = action.thrust ? Math.hypot(action.thrust.x, action.thrust.y) : 0;
+  return Math.min(1, Math.max(tracked, Math.abs(action.throttle ?? 0), thrust));
+}
+
+function actionTurn(action: BehaviorSample['action']) {
+  return Math.min(1, Math.max(
+    Math.abs(action.leftTrack - action.rightTrack) / 2,
+    Math.abs(action.turn ?? 0),
+  ));
+}
+
+function tacticalColor(phase: TacticalPhase, base: THREE.Color) {
+  if (phase === 'search') return new THREE.Color(0x426b82);
+  if (phase === 'aim') return new THREE.Color(0xb779ff);
+  if (phase === 'fire') return new THREE.Color(0xffc46f);
+  return base.clone();
+}
+
+export function tacticalPhaseLabel(phase: TacticalPhase) {
+  return phase === 'search' ? 'ПОИСК'
+    : phase === 'approach' ? 'СБЛИЖЕНИЕ'
+    : phase === 'aim' ? 'НАВЕДЕНИЕ' : 'ОГОНЬ';
+}
+
+function createPhaseMarker(label: string, color: THREE.Color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 384;
+  canvas.height = 96;
+  const context = canvas.getContext('2d');
+  if (context) {
+    const cssColor = `#${color.getHexString()}`;
+    context.fillStyle = 'rgba(3, 18, 29, .88)';
+    context.fillRect(4, 4, 376, 88);
+    context.strokeStyle = cssColor;
+    context.lineWidth = 4;
+    context.strokeRect(4, 4, 376, 88);
+    context.fillStyle = cssColor;
+    context.font = '700 32px monospace';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(label, 192, 49);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+  }));
+  sprite.scale.set(1.45, 0.36, 1);
+  sprite.renderOrder = 8;
+  return sprite;
+}
+
+function createTacticalTrace(replay: Replay, botId: string, samples: BehaviorSample[]): TacticalTraceRig {
+  const group = new THREE.Group();
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const base = new THREE.Color(botColor(botId));
+  const centerPoints: THREE.Vector3[] = [];
+  let previousSide = new THREE.Vector3(0, 0, 1);
+
+  samples.forEach((sample, index) => {
+    const previous = samples[Math.max(0, index - 1)];
+    const next = samples[Math.min(samples.length - 1, index + 1)];
+    const tangent = new THREE.Vector3(
+      next.position.x - previous.position.x, 0, next.position.y - previous.position.y,
+    );
+    if (tangent.lengthSq() < 0.0001) tangent.set(Math.cos(sample.bodyAngle), 0, Math.sin(sample.bodyAngle));
+    tangent.normalize();
+    const side = new THREE.Vector3(-tangent.z, 0, tangent.x);
+    if (side.dot(previousSide) < 0) side.multiplyScalar(-1);
+    previousSide = side.clone();
+    const throttle = actionThrottle(sample.action);
+    const turn = actionTurn(sample.action);
+    const halfWidth = 0.075 + throttle * 0.11 + turn * 0.045;
+    const center = toWorld(sample.position, replay, 0.048);
+    centerPoints.push(center);
+    const color = tacticalColor(tacticalPhase(sample), base);
+    for (const point of [center.clone().addScaledVector(side, halfWidth), center.clone().addScaledVector(side, -halfWidth)]) {
+      positions.push(point.x, point.y, point.z);
+      colors.push(color.r, color.g, color.b);
+    }
+    if (index > 0) {
+      const offset = index * 2;
+      indices.push(offset - 2, offset - 1, offset, offset, offset - 1, offset + 1);
+    }
+  });
+
+  const ribbonGeometry = new THREE.BufferGeometry();
+  ribbonGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  ribbonGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  ribbonGeometry.setIndex(indices);
+  const ribbon = new THREE.Mesh(ribbonGeometry, new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.72,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  ribbon.renderOrder = 2;
+  group.add(ribbon);
+
+  const centerLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(centerPoints),
+    new THREE.LineDashedMaterial({ color: botColor(botId), transparent: true, opacity: 0.78, dashSize: 0.11, gapSize: 0.06 }),
+  );
+  centerLine.computeLineDistances();
+  centerLine.renderOrder = 3;
+  group.add(centerLine);
+
+  const markers: Array<{ tick: number; group: THREE.Group }> = [];
+  let previousPhase: TacticalPhase | undefined;
+  let previousMarkerTick = -Infinity;
+  let markerCount = 0;
+  samples.forEach(sample => {
+    const phase = tacticalPhase(sample);
+    const importantTransition = phase !== previousPhase
+      && (sample.tick - previousMarkerTick >= 5 || phase === 'fire');
+    if (importantTransition && markerCount < 12) {
+      const color = tacticalColor(phase, base);
+      const marker = createPhaseMarker(tacticalPhaseLabel(phase), color);
+      marker.position.y = 0.32;
+      const stem = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0.06, 0), new THREE.Vector3(0, 0.25, 0),
+        ]),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }),
+      );
+      stem.renderOrder = 7;
+      const markerGroup = new THREE.Group();
+      markerGroup.position.copy(toWorld(sample.position, replay));
+      markerGroup.add(marker, stem);
+      markerGroup.visible = false;
+      group.add(markerGroup);
+      markers.push({ tick: sample.tick, group: markerGroup });
+      previousMarkerTick = sample.tick;
+      markerCount += 1;
+    }
+    previousPhase = phase;
+  });
+
+  const aimGroup = new THREE.Group();
+  const coneGeometry = new THREE.BufferGeometry();
+  coneGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0, 1.8, 0, -0.3, 1.8, 0, 0.3,
+  ], 3));
+  coneGeometry.setIndex([0, 1, 2]);
+  const cone = new THREE.Mesh(coneGeometry, new THREE.MeshBasicMaterial({
+    color: botColor(botId), transparent: true, opacity: 0.12,
+    side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  const aimLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1.9, 0, 0)]),
+    new THREE.LineDashedMaterial({
+      color: botColor(botId), transparent: true, opacity: 0.65, dashSize: 0.12, gapSize: 0.07, depthWrite: false,
+    }),
+  );
+  aimLine.computeLineDistances();
+  aimGroup.add(cone, aimLine);
+  aimGroup.visible = false;
+  aimGroup.renderOrder = 4;
+  group.add(aimGroup);
+  group.visible = false;
+  return { botId, group, aimGroup, ribbon, centerLine, markers, samples };
+}
+
 function createEffect(replay: Replay, event: Frame['events'][number], frame: number): ReplayEffect | null {
   if (!event.position || event.type === 'MatchFinished') return null;
   const hit = event.type === 'BotHit' || event.type === 'BotDestroyed';
@@ -366,12 +576,18 @@ function interpolatedBot(state: RenderState, id: Bot['id']): Bot | undefined {
 }
 
 function disposeScene(scene: THREE.Scene) {
+  const disposeMaterial = (material: THREE.Material) => {
+    Object.values(material).forEach(value => {
+      if (value instanceof THREE.Texture) value.dispose();
+    });
+    material.dispose();
+  };
   scene.traverse(object => {
     const renderable = object as THREE.Mesh;
     renderable.geometry?.dispose();
     const material = renderable.material;
-    if (Array.isArray(material)) material.forEach(item => item.dispose());
-    else material?.dispose();
+    if (Array.isArray(material)) material.forEach(disposeMaterial);
+    else if (material) disposeMaterial(material);
   });
 }
 
@@ -383,6 +599,11 @@ export function BlueprintArena({
   position,
   cameraMode,
   showTrails,
+  showChronoXray,
+  showTacticalTrace,
+  traceBotId,
+  perceptionBotId,
+  onSeek,
   shotPlan,
 }: {
   replay: Replay;
@@ -392,15 +613,27 @@ export function BlueprintArena({
   position: number;
   cameraMode: CameraMode;
   showTrails: boolean;
+  showChronoXray: boolean;
+  showTacticalTrace: boolean;
+  traceBotId: string;
+  perceptionBotId: string;
+  onSeek: (position: number) => void;
   shotPlan: ShotPlan;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const renderState = useRef<RenderState>({ frame, next, fraction, position, cameraMode, showTrails, shotPlan });
+  const renderState = useRef<RenderState>({
+    frame, next, fraction, position, cameraMode, showTrails,
+    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan,
+  });
   const [webglError, setWebglError] = useState(false);
 
   useEffect(() => {
-    renderState.current = { frame, next, fraction, position, cameraMode, showTrails, shotPlan };
-  }, [frame, next, fraction, position, cameraMode, showTrails, shotPlan]);
+    renderState.current = {
+      frame, next, fraction, position, cameraMode, showTrails,
+      showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan,
+    };
+  }, [frame, next, fraction, position, cameraMode, showTrails,
+    showChronoXray, showTacticalTrace, traceBotId, perceptionBotId, onSeek, shotPlan]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -473,6 +706,50 @@ export function BlueprintArena({
       scene.add(tank.root);
     }
 
+    const ghostRigs = new Map<string, GhostRig>();
+    const ghostCount = 9;
+    for (const id of botIds) {
+      const material = new THREE.MeshBasicMaterial({
+        color: botColor(id),
+        transparent: true,
+        opacity: 0.13,
+        wireframe: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const hulls = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 0.24, 0.52), material, ghostCount);
+      const turrets = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.19, 0.22, 0.16, 10), material.clone(), ghostCount,
+      );
+      hulls.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      turrets.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      hulls.count = 0;
+      turrets.count = 0;
+      hulls.renderOrder = 4;
+      turrets.renderOrder = 4;
+      ghostRigs.set(id, { hulls, turrets });
+      scene.add(hulls, turrets);
+    }
+
+    const samplesByBot = new Map<string, BehaviorSample[]>();
+    for (const sample of replay.behaviorSamples ?? []) {
+      const samples = samplesByBot.get(sample.botId) ?? [];
+      samples.push(sample);
+      samplesByBot.set(sample.botId, samples);
+    }
+    const tacticalTraces: TacticalTraceRig[] = [];
+    for (const id of botIds) {
+      const samples = samplesByBot.get(id);
+      if (!samples?.length) continue;
+      const trace = createTacticalTrace(replay, id, samples);
+      tacticalTraces.push(trace);
+      scene.add(trace.group);
+    }
+    const perceptionRig = createPerceptionRig(replay);
+    scene.add(perceptionRig.group);
+    const timeTowerRig = createTimeTower(replay);
+    scene.add(timeTowerRig.group);
+
     const bulletOwners = new Map<number, string>();
     replay.frames.forEach(item => item.bullets.forEach(bullet => bulletOwners.set(bullet.id, bullet.ownerBotId)));
     replay.frames.forEach(item => item.events.forEach(event => {
@@ -513,6 +790,43 @@ export function BlueprintArena({
       bullets.set(id, bullet);
       scene.add(bullet);
     }
+
+    const chronoProjectileMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd28a,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const chronoProjectileSlices = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.2, 0.065, 0.065), chronoProjectileMaterial, 14,
+    );
+    chronoProjectileSlices.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    chronoProjectileSlices.count = 0;
+    chronoProjectileSlices.renderOrder = 5;
+    scene.add(chronoProjectileSlices);
+
+    const chronoReticle = new THREE.Group();
+    const chronoReticleMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd28a,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    for (const rotation of [
+      new THREE.Euler(-Math.PI / 2, 0, 0),
+      new THREE.Euler(0, 0, 0),
+      new THREE.Euler(0, Math.PI / 2, 0),
+    ]) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.35, 40), chronoReticleMaterial.clone());
+      ring.rotation.copy(rotation);
+      chronoReticle.add(ring);
+    }
+    chronoReticle.visible = false;
+    chronoReticle.renderOrder = 6;
+    scene.add(chronoReticle);
 
     const trailLines = new Map<string, THREE.Line>();
     for (const id of botIds) {
@@ -820,19 +1134,65 @@ export function BlueprintArena({
     resizeObserver.observe(host);
     resize();
 
+    const timeRaycaster = new THREE.Raycaster();
+    const timePointer = new THREE.Vector2();
+    const seekFromTower = (event: PointerEvent) => {
+      const state = renderState.current;
+      if (state.cameraMode !== 'timeline') return;
+      const bounds = renderer.domElement.getBoundingClientRect();
+      timePointer.set(
+        (event.clientX - bounds.left) / bounds.width * 2 - 1,
+        -(event.clientY - bounds.top) / bounds.height * 2 + 1,
+      );
+      timeRaycaster.setFromCamera(timePointer, camera);
+      const hit = timeRaycaster.intersectObjects(timeTowerRig.group.children, true)
+        .find(intersection => intersection.object.userData.timePickable === true);
+      if (!hit) return;
+      const framePosition = THREE.MathUtils.clamp(
+        (hit.point.y - 0.08) / timeTowerRig.timeScale,
+        0,
+        replay.frames.length - 1,
+      );
+      state.onSeek(framePosition);
+    };
+    renderer.domElement.addEventListener('pointerdown', seekFromTower);
+
     const clock = new THREE.Clock();
     let animationFrame = 0;
     let activeDirectorShotId = '';
     let adaptiveShotId = '';
     let adaptivePose: AdaptivePose | undefined;
+    let activeChronoShotId = '';
+    let chronoElapsed = 0;
+    const chronoDummy = new THREE.Object3D();
+    const verticalAxis = new THREE.Vector3(0, 1, 0);
 
     const render = () => {
       animationFrame = requestAnimationFrame(render);
       const state = renderState.current;
       const delta = Math.min(clock.getDelta(), 0.05);
       const currentBots = new Map<string, Bot>();
+      const perceptionMode = state.cameraMode === 'perception';
+      const timelineMode = state.cameraMode === 'timeline';
       const director = state.cameraMode === 'auto' || state.cameraMode === 'adaptive'
         ? directorStateAt(state.shotPlan, state.position) : undefined;
+      const chronoEventFrame = director?.shot?.eventFrame;
+      const chronoActive = state.showChronoXray
+        && chronoEventFrame != null
+        && (director?.shot?.kind === 'impact' || director?.shot?.kind === 'finale')
+        && state.position >= chronoEventFrame
+        && state.position <= chronoEventFrame + 1.35;
+      if (chronoActive && director?.shot) {
+        if (activeChronoShotId !== director.shot.id) {
+          activeChronoShotId = director.shot.id;
+          chronoElapsed = 0;
+        } else {
+          chronoElapsed += delta;
+        }
+      } else {
+        activeChronoShotId = '';
+        chronoElapsed = 0;
+      }
       const lastReplayFrame = replay.frames.length - 1;
       const matchEnded = state.position >= lastReplayFrame;
 
@@ -862,6 +1222,136 @@ export function BlueprintArena({
           tank.winnerMaterial.opacity = 0.28 + Math.sin(tailProgress * Math.PI * 3) * 0.08;
           tank.winnerHalo.scale.setScalar(0.88 + tailProgress * 0.2);
         }
+      }
+
+      const perceptionSamples = samplesByBot.get(state.perceptionBotId) ?? [];
+      const perceptionSampleIndex = THREE.MathUtils.clamp(
+        Math.floor(state.position), 0, Math.max(0, perceptionSamples.length - 1),
+      );
+      const perceptionSample = perceptionSamples[perceptionSampleIndex];
+      const perceptionBot = currentBots.get(state.perceptionBotId);
+      const perceptionEnemy = [...currentBots.values()].find(bot => bot.id !== state.perceptionBotId);
+      let lastKnownTarget: LastKnownTarget | undefined;
+      if (perceptionBot && perceptionSamples.length) {
+        for (let index = perceptionSampleIndex; index >= 0; index -= 1) {
+          const knownSample = perceptionSamples[index];
+          if (!knownSample.enemyVisible) continue;
+          const knownEnemy = replay.frames[Math.min(knownSample.tick, replay.frames.length - 1)]?.bots
+            .find(bot => bot.id !== state.perceptionBotId);
+          if (knownEnemy) {
+            lastKnownTarget = {
+              position: knownEnemy.position,
+              ageFrames: Math.max(0, state.position - knownSample.tick),
+              botId: knownEnemy.id,
+            };
+          }
+          break;
+        }
+      }
+      perceptionRig.group.visible = perceptionMode && perceptionBot != null && perceptionSamples.length > 0;
+      if (perceptionRig.group.visible && perceptionBot) {
+        updatePerceptionRig(
+          perceptionRig, replay, perceptionBot, perceptionEnemy,
+          perceptionSample, lastKnownTarget, clock.elapsedTime,
+        );
+      }
+
+      timeTowerRig.group.visible = timelineMode;
+      if (timelineMode) updateTimeTower(timeTowerRig, replay, state.position, currentBots);
+      if (scene.fog instanceof THREE.FogExp2) scene.fog.density = timelineMode ? 0.014 : 0.032;
+
+      tanks.forEach((tank, id) => {
+        if (timelineMode) {
+          tank.root.visible = false;
+        } else if (perceptionMode) {
+          const bot = currentBots.get(id);
+          const visibleEnemy = !perceptionSamples.length
+            || perceptionSample?.enemyVisible === true || (bot?.hp ?? 1) <= 0;
+          tank.root.visible = id === state.perceptionBotId || visibleEnemy;
+        } else {
+          tank.root.visible = true;
+        }
+      });
+
+      for (const [id, rig] of ghostRigs) {
+        if (!chronoActive || chronoEventFrame == null) {
+          rig.hulls.count = 0;
+          rig.turrets.count = 0;
+          continue;
+        }
+        let count = 0;
+        for (let sampleIndex = 0; sampleIndex < ghostCount; sampleIndex += 1) {
+          const sampleFrame = Math.max(0, Math.round(
+            chronoEventFrame - 12 + sampleIndex * 12 / (ghostCount - 1),
+          ));
+          const bot = replay.frames[Math.min(sampleFrame, replay.frames.length - 1)]?.bots
+            .find(candidate => candidate.id === id);
+          if (!bot) continue;
+          const world = toWorld(bot.position, replay);
+          chronoDummy.position.set(world.x, 0.2, world.z);
+          chronoDummy.rotation.set(0, -bot.bodyAngle, 0);
+          chronoDummy.scale.setScalar(0.94 + sampleIndex / (ghostCount - 1) * 0.06);
+          chronoDummy.updateMatrix();
+          rig.hulls.setMatrixAt(count, chronoDummy.matrix);
+          chronoDummy.position.y = 0.39;
+          chronoDummy.rotation.set(0, -bot.turretAngle, 0);
+          chronoDummy.updateMatrix();
+          rig.turrets.setMatrixAt(count, chronoDummy.matrix);
+          count += 1;
+        }
+        rig.hulls.count = count;
+        rig.turrets.count = count;
+        rig.hulls.instanceMatrix.needsUpdate = true;
+        rig.turrets.instanceMatrix.needsUpdate = true;
+      }
+
+      tacticalTraces.forEach(trace => {
+        const visible = state.showTacticalTrace && !perceptionMode && !timelineMode
+          && trace.botId === state.traceBotId;
+        trace.group.visible = visible;
+        if (!visible) return;
+        const sampleIndex = THREE.MathUtils.clamp(
+          Math.floor(state.position), 0, Math.max(0, trace.samples.length - 1),
+        );
+        trace.ribbon.geometry.setDrawRange(0, Math.max(0, sampleIndex) * 6);
+        trace.centerLine.geometry.setDrawRange(0, sampleIndex + 1);
+        trace.markers.forEach(marker => { marker.group.visible = marker.tick <= state.position; });
+        const sample = trace.samples[sampleIndex];
+        const bot = currentBots.get(trace.botId);
+        if (!sample || !bot) {
+          trace.aimGroup.visible = false;
+          return;
+        }
+        const aim = sample.action.aimDirection;
+        trace.aimGroup.visible = Math.hypot(aim.x, aim.y) > 0.001;
+        trace.aimGroup.position.copy(toWorld(bot.position, replay, 0.075));
+        trace.aimGroup.rotation.y = -Math.atan2(aim.y, aim.x);
+      });
+
+      chronoProjectileSlices.count = 0;
+      if (chronoActive && director?.shot?.bulletId != null) {
+        const flight = bulletFlights.get(director.shot.bulletId);
+        if (flight) {
+          const direction = Math.atan2(flight.end.y - flight.start.y, flight.end.x - flight.start.x);
+          const sliceCount = 14;
+          for (let slice = 0; slice < sliceCount; slice += 1) {
+            const progress = slice / (sliceCount - 1);
+            const point = mixPoint(flight.start, flight.end, progress);
+            chronoDummy.position.copy(toWorld(point, replay, 0.31));
+            chronoDummy.rotation.set(0, -direction, 0);
+            chronoDummy.scale.setScalar(0.55 + progress * 0.65);
+            chronoDummy.updateMatrix();
+            chronoProjectileSlices.setMatrixAt(slice, chronoDummy.matrix);
+          }
+          chronoProjectileSlices.count = sliceCount;
+          chronoProjectileSlices.instanceMatrix.needsUpdate = true;
+        }
+      }
+      chronoReticle.visible = chronoActive && director?.shot?.focus != null;
+      if (chronoReticle.visible && director?.shot?.focus) {
+        chronoReticle.position.copy(toWorld(director.shot.focus, replay, 0.32));
+        chronoReticle.rotation.y = chronoElapsed * 0.55;
+        chronoReticle.scale.setScalar(1 + Math.sin(chronoElapsed * 4.5) * 0.1);
       }
 
       const visibleBullets = new Set<number>();
@@ -899,10 +1389,11 @@ export function BlueprintArena({
         }
       }
       bullets.forEach((object, id) => { if (!visibleBullets.has(id)) object.visible = false; });
+      if (timelineMode) bullets.forEach(object => { object.visible = false; });
 
       const currentFrame = Math.min(replay.frames.length, Math.floor(state.position) + 1);
       trailLines.forEach(line => {
-        line.visible = state.showTrails;
+        line.visible = state.showTrails && !perceptionMode && !timelineMode;
         line.geometry.setDrawRange(0, currentFrame);
       });
 
@@ -910,6 +1401,7 @@ export function BlueprintArena({
         const age = state.position - effect.frame;
         const duration = effect.type === 'BotDestroyed' ? 15 : effect.type === 'BotHit' ? 9 : 3.2;
         effect.group.visible = age >= 0 && age <= duration;
+        if (timelineMode) effect.group.visible = false;
         if (!effect.group.visible) continue;
         const progress = age / duration;
         const muzzle = effect.type === 'ShotFired';
@@ -930,7 +1422,30 @@ export function BlueprintArena({
       let desiredFov = 38;
       let hardDirectorCut = false;
 
-      if (mode === 'plan') {
+      if (mode === 'timeline') {
+        desiredTarget.set(0, timeTowerRig.height * 0.46, 0);
+        desiredPosition.set(
+          maxDimension * 0.78,
+          timeTowerRig.height * 0.7,
+          maxDimension * 0.96,
+        );
+        desiredUp.set(0, 1, 0);
+        desiredFov = 43;
+      } else if (mode === 'perception') {
+        const observed = currentBots.get(state.perceptionBotId);
+        desiredUp.set(0, 1, 0);
+        if (observed) {
+          const observedPosition = toWorld(observed.position, replay, 0.12);
+          desiredTarget.copy(observedPosition);
+          desiredPosition.copy(observedPosition).add(new THREE.Vector3(
+            maxDimension * 0.24, maxDimension * 0.48, maxDimension * 0.34,
+          ));
+        } else {
+          desiredTarget.copy(arenaCenter);
+          desiredPosition.set(maxDimension * 0.24, maxDimension * 0.6, maxDimension * 0.34);
+        }
+        desiredFov = 43;
+      } else if (mode === 'plan') {
         desiredTarget.copy(arenaCenter);
         desiredPosition.set(maxDimension * 0.18, maxDimension * 0.92, maxDimension * 0.58);
         desiredUp.set(0, 1, 0);
@@ -988,6 +1503,13 @@ export function BlueprintArena({
         }
       }
 
+      if (chronoActive) {
+        const orbitOffset = desiredPosition.clone().sub(desiredTarget)
+          .applyAxisAngle(verticalAxis, chronoElapsed * 0.24);
+        desiredPosition.copy(desiredTarget).add(orbitOffset);
+        desiredFov = Math.min(desiredFov, 34);
+      }
+
       const directorMode = mode === 'auto' || mode === 'adaptive';
       const smoothing = 1 - Math.exp(-delta * (mode === 'auto' ? 2.35 : mode === 'adaptive' ? 3.1 : 4.2));
       if (hardDirectorCut) {
@@ -1017,15 +1539,18 @@ export function BlueprintArena({
       if (!cutawayTargets.length) cutawayTargets.push(cameraTarget.clone());
       const wallFade = 1 - Math.exp(-delta * 8.5);
       for (const wall of wallRigs) {
-        const cut = mode === 'adaptive'
+        const cut = (mode === 'adaptive' || chronoActive)
           && cutawayTargets.some(target => wallBlocks(camera.position, target, wall.box));
-        wall.surface.opacity = THREE.MathUtils.lerp(wall.surface.opacity, cut ? 0.07 : 1, wallFade);
-        wall.edges.opacity = THREE.MathUtils.lerp(wall.edges.opacity, cut ? 1 : 0.88, wallFade);
-        wall.section.opacity = THREE.MathUtils.lerp(wall.section.opacity, cut ? 0.24 : 0, wallFade);
+        const surfaceOpacity = timelineMode ? 0.14 : cut ? 0.07 : 1;
+        const edgeOpacity = timelineMode ? 0.42 : cut ? 1 : 0.88;
+        const sectionOpacity = timelineMode ? 0.08 : cut ? 0.24 : 0;
+        wall.surface.opacity = THREE.MathUtils.lerp(wall.surface.opacity, surfaceOpacity, wallFade);
+        wall.edges.opacity = THREE.MathUtils.lerp(wall.edges.opacity, edgeOpacity, wallFade);
+        wall.section.opacity = THREE.MathUtils.lerp(wall.section.opacity, sectionOpacity, wallFade);
         wall.surface.emissiveIntensity = THREE.MathUtils.lerp(
-          wall.surface.emissiveIntensity, cut ? 1.15 : 0.32, wallFade,
+          wall.surface.emissiveIntensity, timelineMode ? 0.48 : cut ? 1.15 : 0.32, wallFade,
         );
-        wall.surface.color.lerp(cut ? cutWallColor : normalWallColor, wallFade);
+        wall.surface.color.lerp(cut || timelineMode ? cutWallColor : normalWallColor, wallFade);
         wall.surface.depthWrite = wall.surface.opacity > 0.42;
       }
       renderer.render(scene, camera);
@@ -1035,6 +1560,7 @@ export function BlueprintArena({
     return () => {
       cancelAnimationFrame(animationFrame);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener('pointerdown', seekFromTower);
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();

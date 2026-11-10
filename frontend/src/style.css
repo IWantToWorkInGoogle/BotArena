@@ -134,6 +134,127 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
   color: #ffcb87;
   font-style: normal;
 }
+.chrono-badge {
+  position: absolute;
+  z-index: 6;
+  top: 2.15rem;
+  right: .9rem;
+  display: grid;
+  justify-items: end;
+  padding: .42rem .55rem;
+  border-right: 2px solid #ffcb87;
+  background: linear-gradient(270deg, rgb(32 22 10 / .88), rgb(3 18 29 / .18));
+  color: #ffe2ad;
+  font: 600 .55rem/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .09em;
+  text-shadow: 0 0 .6rem rgb(255 190 96 / .65);
+  pointer-events: none;
+}
+.chrono-badge strong { font-size: .68rem; }
+.chrono-badge span { color: #d9b878; }
+.tactical-readout {
+  --phase-color: #69dfff;
+  position: absolute;
+  z-index: 6;
+  right: .9rem;
+  bottom: .82rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: .18rem;
+  width: min(14rem, 43%);
+  padding: .42rem .55rem .38rem;
+  border-right: 2px solid var(--phase-color);
+  background: linear-gradient(270deg, rgb(3 18 29 / .94), rgb(3 18 29 / .52));
+  color: #79cce2;
+  font: 600 .5rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .07em;
+  text-shadow: 0 0 .45rem rgb(49 199 245 / .5);
+  pointer-events: none;
+}
+.tactical-readout.phase-search { --phase-color: #6e9bb2; }
+.tactical-readout.phase-aim { --phase-color: #bd7cff; }
+.tactical-readout.phase-fire { --phase-color: #ffca78; }
+.tactical-readout > span { color: #78a9ba; }
+.tactical-readout > strong {
+  color: var(--phase-color);
+  font-size: .68rem;
+}
+.track-command {
+  display: grid;
+  grid-template-columns: .7rem 1fr 2.6rem;
+  align-items: center;
+  gap: .32rem;
+}
+.track-command b { color: #d8f7ff; }
+.track-command i {
+  height: .24rem;
+  overflow: hidden;
+  background: rgb(78 119 139 / .32);
+}
+.track-command u {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+  background: var(--phase-color);
+  box-shadow: 0 0 .4rem var(--phase-color);
+  text-decoration: none;
+}
+.track-command u.reverse { background: #ef73ca; }
+.track-command em {
+  color: #d8f7ff;
+  font-style: normal;
+  text-align: right;
+}
+.tactical-readout small {
+  margin-top: .08rem;
+  color: #608a9c;
+  font-size: .4rem;
+}
+.perception-readout, .timeline-readout {
+  position: absolute;
+  z-index: 6;
+  right: .9rem;
+  bottom: .82rem;
+  display: grid;
+  justify-items: end;
+  gap: .16rem;
+  width: min(18rem, 54%);
+  padding: .46rem .6rem .42rem;
+  background: linear-gradient(270deg, rgb(3 18 29 / .95), rgb(3 18 29 / .42));
+  font: 600 .5rem/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .075em;
+  text-align: right;
+  pointer-events: none;
+}
+.perception-readout {
+  border-right: 2px solid #ffbf69;
+  color: #8fb9c7;
+}
+.perception-readout.contact { border-color: #8effb4; }
+.perception-readout strong {
+  color: #ffcf88;
+  font-size: .72rem;
+  text-shadow: 0 0 .55rem rgb(255 187 94 / .55);
+}
+.perception-readout.contact strong {
+  color: #a6ffc2;
+  text-shadow: 0 0 .55rem rgb(108 255 155 / .48);
+}
+.perception-readout small, .timeline-readout small {
+  color: #658b9a;
+  font-size: .4rem;
+}
+.timeline-readout {
+  border-right: 2px solid #70e4ff;
+  color: #78afc0;
+}
+.timeline-readout strong {
+  color: #bdf5ff;
+  font-size: .82rem;
+  text-shadow: 0 0 .65rem rgb(58 213 255 / .68);
+}
+.timeline-mode .blueprint-reticle, .perception-mode .blueprint-reticle { display: none; }
+.timeline-mode .blueprint-canvas { cursor: ns-resize; }
 .director-bar {
   display: flex;
   align-items: center;
@@ -182,6 +303,21 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
   color: #8da9b9;
 }
 .trail-toggle input { accent-color: #53e7ff; }
+.visual-layers {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .48rem .8rem;
+}
+.visual-layers select {
+  min-width: 7.4rem;
+  padding: .3rem 1.75rem .3rem .48rem;
+  border-color: #294d63;
+  background-color: #081522;
+  color: #b5d8e7;
+  font-size: .74rem;
+}
 .replay-controls { margin-top: .55rem; }
 .replay-controls button { min-width: 6.4rem; }
 .webgl-error {

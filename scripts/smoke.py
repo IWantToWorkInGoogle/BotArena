@@ -26,11 +26,18 @@ def run(code, opponent="aggressive"):
 
 def check_replay(replay, bot_count=2):
     frames = replay["frames"]
+    behavior_samples = replay["behaviorSamples"]
     assert replay["tickRate"] == 20
     assert [frame["tick"] for frame in frames] == list(range(len(frames)))
     assert replay["result"]["durationTicks"] == len(frames) - 1 <= 200
     assert frames[-1]["events"][-1]["type"] == "MatchFinished"
     assert all(len(frame["bots"]) == bot_count for frame in frames)
+    assert len(behavior_samples) <= replay["result"]["durationTicks"] * bot_count
+    assert all(sample["tick"] < replay["result"]["durationTicks"] for sample in behavior_samples)
+    assert {sample["botId"] for sample in behavior_samples} <= {
+        bot["id"] for bot in frames[0]["bots"]
+    }
+    assert all("enemyVisible" in sample and "turretAngle" in sample for sample in behavior_samples)
 
 
 def main():

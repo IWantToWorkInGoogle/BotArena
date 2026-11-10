@@ -17,6 +17,24 @@ export interface Bot {
   canShoot: boolean;
 }
 export interface Bullet { id: number; ownerBotId: Bot['id']; position: Point; direction: Point }
+export interface BotAction {
+  leftTrack: number;
+  rightTrack: number;
+  aimDirection: Point;
+  shoot: boolean;
+  thrust?: Point;
+  turn?: number;
+  throttle?: number;
+}
+export interface BehaviorSample {
+  tick: number;
+  botId: Bot['id'];
+  position: Point;
+  bodyAngle: number;
+  turretAngle: number;
+  enemyVisible: boolean;
+  action: BotAction;
+}
 export interface BattleEvent {
   tick: number;
   type: 'ShotFired' | 'BotHit' | 'BotDestroyed' | 'MatchFinished';
@@ -32,6 +50,7 @@ export interface Replay {
   arena: Arena;
   result: { winnerBotId: Bot['id'] | null; reason: 'BotDestroyed' | 'TimeLimit' | 'BotError'; durationTicks: number };
   frames: Frame[];
+  behaviorSamples?: BehaviorSample[];
 }
 export interface ScriptError {
   botId: Bot['id'];
