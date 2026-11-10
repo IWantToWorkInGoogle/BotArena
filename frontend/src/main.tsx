@@ -2,13 +2,14 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { MatchJobStatus, Opponent, Replay, ScriptError, StrategyLanguage } from './contracts';
-import { ReplayPlayer } from './ReplayPlayer';
 import { MatchDiagnosticError, runMatch } from './matchApi';
+import { botLabel } from './botVisuals';
 import { StrategyHelp } from './StrategyHelp';
 import { text } from './text';
 import './style.css';
 
 const StrategyEditor = lazy(() => import('./StrategyEditor'));
+const ReplayPlayer = lazy(() => import('./ReplayPlayer').then(module => ({ default: module.ReplayPlayer })));
 
 const example = `function tick({ self, enemy }) {
   const { x, y } = self.position;
@@ -148,7 +149,7 @@ function App() {
             <div role="alert" className="error-card">
               <div className="error-heading">
                 <strong>{text.diagnostic.title}</strong>
-                <span>{text.replay[scriptError.botId]}</span>
+                <span>{botLabel(scriptError.botId)}</span>
               </div>
               <p>{scriptError.line == null ? scriptError.message :
                 scriptError.tick == null ? text.diagnostic.load : text.diagnostic.tickFailure}</p>
@@ -174,7 +175,9 @@ function App() {
         </form>
         <section className="panel replay">
           <h2>{text.arena}</h2>
-          {replay ? <ReplayPlayer replay={replay} /> :
+          {replay ? <Suspense fallback={<div className="empty">Загружаем WebGL‑сцену…</div>}>
+            <ReplayPlayer replay={replay} />
+          </Suspense> :
             <div className="empty">{text.emptyArena}</div>}
         </section>
       </div>

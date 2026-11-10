@@ -3,7 +3,8 @@ using BotArena;
 if (args is ["--match-worker"]) return await MatchWorker.RunChildAsync();
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://127.0.0.1:5050");
+if (builder.Configuration["urls"] is null)
+    builder.WebHost.UseUrls("http://127.0.0.1:5050");
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 128 * 1024);
 builder.Services.AddSingleton<MatchQueue>();
 builder.Services.AddHostedService(services => services.GetRequiredService<MatchQueue>());
