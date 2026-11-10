@@ -1,4 +1,7 @@
 import type { Bot, Point, Replay, Wall } from './contracts';
+import { botDirectorLabel } from './botVisuals';
+
+export const VISUAL_TAIL_FRAMES = 15;
 
 export type ShotKind = 'establishing' | 'duel' | 'follow' | 'projectile' | 'impact' | 'finale';
 
@@ -31,11 +34,6 @@ interface Highlight {
   bulletId?: number;
   label: string;
 }
-
-const botName: Record<Bot['id'], string> = {
-  player: 'МОЙ БОТ',
-  opponent: 'ПРОТИВНИК',
-};
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -145,7 +143,12 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
     bulletId?: number;
   }> = [];
   const fired = new Map<number, { frame: number; subject?: Bot['id']; focus?: Point }>();
-  let destruction: Highlight | undefined;
+  const destructions: Array<{
+    frame: number;
+    focus?: Point;
+    subject?: Bot['id'];
+    bulletId?: number;
+  }> = [];
 
   replay.frames.forEach((frame, frameIndex) => frame.events.forEach(event => {
     if (event.type === 'ShotFired' && event.bulletId != null) {
@@ -155,15 +158,12 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
         focus: event.position ?? undefined,
       });
     } else if (event.type === 'BotDestroyed') {
-      destruction = {
-        kind: 'finale',
-        startFrame: Math.max(0, frameIndex - 13),
-        endFrame: lastFrame,
+      destructions.push({
+        frame: frameIndex,
         focus: event.position ?? undefined,
         subject: event.sourceBotId ?? undefined,
         bulletId: event.bulletId ?? undefined,
-        label: event.sourceBotId ? `ФИНАЛЬНЫЙ УДАР · ${botName[event.sourceBotId]}` : 'ФИНАЛЬНЫЙ УДАР',
-      };
+      });
     } else if (event.type === 'BotHit') {
       hits.push({
         frame: frameIndex,
@@ -175,6 +175,23 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
     }
   }));
 
+  const lastDestructionFrame = destructions.reduce((latest, item) => Math.max(latest, item.frame), -1);
+  const finalDestructions = destructions.filter(item => item.frame === lastDestructionFrame);
+  const doubleKnockout = finalDestructions.length > 1 && replay.result.winnerBotId == null;
+  const finalDestruction = finalDestructions.at(-1);
+  const destruction: Highlight | undefined = finalDestruction ? {
+    kind: 'finale',
+    startFrame: Math.max(0, finalDestruction.frame - 13),
+    endFrame: lastFrame,
+    focus: doubleKnockout
+      ? midpoint(finalDestructions.flatMap(item => item.focus ? [item.focus] : []))
+      : finalDestruction.focus,
+    subject: doubleKnockout ? undefined : finalDestruction.subject,
+    bulletId: doubleKnockout ? undefined : finalDestruction.bulletId,
+    label: doubleKnockout ? 'ДВОЙНОЙ НОКАУТ'
+      : finalDestruction.subject ? `ФИНАЛЬНЫЙ УДАР · ${botDirectorLabel(finalDestruction.subject)}`
+      : 'ФИНАЛЬНЫЙ УДАР',
+  } : undefined;
   const finaleStart = destruction?.startFrame ?? Math.max(0, lastFrame - 12);
   const eligible = hits.filter(hit => hit.frame >= 14 && hit.frame < finaleStart - 10);
   const selected: typeof eligible = [];
@@ -190,26 +207,27 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
     .flatMap<Highlight>(hit => {
       const shot = hit.bulletId == null ? undefined : fired.get(hit.bulletId);
       const sequence: Highlight[] = [];
-      if (shot && hit.frame > shot.frame) {
+      const impactStart = shot && hit.frame === shot.frame ? hit.frame + 0.75 : hit.frame;
+      if (shot) {
         sequence.push({
           kind: 'projectile',
           // Give the camera two frames of anticipation even for point-blank shots.
           startFrame: Math.max(0, shot.frame - 2),
-          endFrame: hit.frame,
+          endFrame: impactStart,
           focus: shot.focus,
           subject: shot.subject ?? hit.subject,
           bulletId: hit.bulletId,
-          label: shot.subject ? `ВЫСТРЕЛ · ${botName[shot.subject]}` : 'ПОЛЁТ СНАРЯДА',
+          label: shot.subject ? `ВЫСТРЕЛ · ${botDirectorLabel(shot.subject)}` : 'ПОЛЁТ СНАРЯДА',
         });
       }
       sequence.push({
         kind: 'impact',
-        startFrame: hit.frame,
-        endFrame: Math.min(finaleStart, hit.frame + 8),
+        startFrame: impactStart,
+        endFrame: Math.min(finaleStart, impactStart + 8),
         focus: hit.focus,
         subject: hit.subject,
         bulletId: hit.bulletId,
-        label: hit.subject ? `ПОПАДАНИЕ · ${botName[hit.subject]}` : 'ПОПАДАНИЕ',
+        label: hit.subject ? `ПОПАДАНИЕ · ${botDirectorLabel(hit.subject)}` : 'ПОПАДАНИЕ',
       });
       return sequence;
     });
@@ -219,12 +237,12 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
     startFrame: Math.max(0, lastFrame - 12),
     endFrame: lastFrame,
     subject: replay.result.winnerBotId ?? undefined,
-    label: replay.result.winnerBotId ? `ФИНАЛ · ${botName[replay.result.winnerBotId]}` : 'ФИНАЛ БОЯ',
+    label: replay.result.winnerBotId ? `ФИНАЛ · ${botDirectorLabel(replay.result.winnerBotId)}` : 'ФИНАЛ БОЯ',
   };
   return [...impacts, destruction ?? fallbackFinale];
 }
 
-function fillerShots(startFrame: number, endFrame: number, serial: number) {
+function fillerShots(startFrame: number, endFrame: number, serial: number, botIds: string[]) {
   const result: Array<Omit<CinematicShot, 'id' | 'azimuth'>> = [];
   const duration = endFrame - startFrame;
   if (duration <= 0.01) return result;
@@ -235,11 +253,11 @@ function fillerShots(startFrame: number, endFrame: number, serial: number) {
     const end = startFrame + duration * (chunk + 1) / chunks;
     const absolute = serial + chunk;
     const isOpening = startFrame === 0 && chunk === 0;
-    const subject: Bot['id'] = absolute % 2 === 0 ? 'player' : 'opponent';
+    const subject = botIds.length ? botIds[absolute % botIds.length] : undefined;
     result.push({
-      kind: isOpening ? 'establishing' : absolute % 3 === 0 ? 'follow' : 'duel',
+      kind: isOpening ? 'establishing' : absolute % 3 === 0 && subject ? 'follow' : 'duel',
       label: isOpening ? 'ОБЩИЙ ПЛАН' : absolute % 3 === 0
-        ? `СОПРОВОЖДЕНИЕ · ${botName[subject]}` : 'БОЕВОЙ КОНТАКТ',
+        ? `СОПРОВОЖДЕНИЕ · ${subject ? botDirectorLabel(subject) : 'ЦЕЛЬ'}` : 'БОЕВОЙ КОНТАКТ',
       startFrame: start,
       endFrame: end,
       subject: isOpening ? undefined : subject,
@@ -255,12 +273,13 @@ export function buildShotPlan(replay: Replay): ShotPlan {
   if (lastFrame === 0) return { shots: [], lastFrame };
   const highlights = collectHighlights(replay, lastFrame).sort((a, b) => a.startFrame - b.startFrame);
   const raw: Array<Omit<CinematicShot, 'id' | 'azimuth'>> = [];
+  const botIds = [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))];
   let cursor = 0;
   let fillerSerial = 0;
 
   for (const highlight of highlights) {
     const start = clamp(highlight.startFrame, cursor, lastFrame);
-    raw.push(...fillerShots(cursor, start, fillerSerial));
+    raw.push(...fillerShots(cursor, start, fillerSerial, botIds));
     fillerSerial += 1;
     if (highlight.endFrame > start) {
       raw.push({
@@ -275,7 +294,7 @@ export function buildShotPlan(replay: Replay): ShotPlan {
     }
     cursor = Math.max(cursor, highlight.endFrame);
   }
-  raw.push(...fillerShots(cursor, lastFrame, fillerSerial));
+  raw.push(...fillerShots(cursor, lastFrame, fillerSerial, botIds));
 
   let previousAzimuth = 0.75;
   const shots = raw.filter(shot => shot.endFrame - shot.startFrame > 0.01).map((shot, index) => {

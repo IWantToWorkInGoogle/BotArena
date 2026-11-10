@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { MatchJobStatus, Opponent, Replay, ScriptError, StrategyLanguage } from './contracts';
 import { MatchDiagnosticError, runMatch } from './matchApi';
+import { botLabel } from './botVisuals';
 import { StrategyHelp } from './StrategyHelp';
 import { text } from './text';
 import './style.css';
@@ -148,7 +149,7 @@ function App() {
             <div role="alert" className="error-card">
               <div className="error-heading">
                 <strong>{text.diagnostic.title}</strong>
-                <span>{text.replay[scriptError.botId]}</span>
+                <span>{botLabel(scriptError.botId)}</span>
               </div>
               <p>{scriptError.line == null ? scriptError.message :
                 scriptError.tick == null ? text.diagnostic.load : text.diagnostic.tickFailure}</p>

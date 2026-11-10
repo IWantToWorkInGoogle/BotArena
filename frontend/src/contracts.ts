@@ -2,7 +2,7 @@ export interface Point { x: number; y: number }
 export interface Wall extends Point { width: number; height: number }
 export interface Arena { width: number; height: number; walls: Wall[] }
 export interface Bot {
-  id: 'player' | 'opponent';
+  id: string;
   position: Point;
   hp: number;
   maxHp: number;

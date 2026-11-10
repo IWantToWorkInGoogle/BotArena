@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Bot, Frame, Point, Replay } from './contracts';
-import { directorStateAt } from './cinematicDirector';
+import { directorStateAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
 import type { CinematicShot, ShotPlan } from './cinematicDirector';
+import { botColor } from './botVisuals';
 
-export type CameraMode = 'auto' | 'adaptive' | 'plan' | 'overview' | Bot['id'];
+export type CameraMode = 'auto' | 'adaptive' | 'plan' | 'overview' | `bot:${string}`;
 
 const palette = {
-  player: 0x53e7ff,
-  opponent: 0xffad58,
   grid: 0x1f759b,
   structure: 0x55c9ee,
 };
@@ -28,6 +27,8 @@ interface TankRig {
   hull: THREE.Group;
   turret: THREE.Group;
   materials: THREE.Material[];
+  winnerHalo: THREE.Mesh;
+  winnerMaterial: THREE.MeshBasicMaterial;
 }
 
 interface ReplayEffect {
@@ -53,6 +54,15 @@ interface AdaptivePose {
   height: number;
   lateral: number;
   fov: number;
+}
+
+interface BulletFlight {
+  id: number;
+  owner: string;
+  startFrame: number;
+  endFrame: number;
+  start: Point;
+  end: Point;
 }
 
 function mixPoint(start: Point, end: Point, fraction: number): Point {
@@ -196,10 +206,23 @@ function createTank(color: number): TankRig {
   materials.push(axisMaterial);
 
   root.add(hull, turret);
+  const winnerMaterial = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const winnerHalo = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.88, 40), winnerMaterial);
+  winnerHalo.rotation.x = -Math.PI / 2;
+  winnerHalo.position.y = 0.025;
+  winnerHalo.visible = false;
+  root.add(winnerHalo);
   materials.forEach(material => {
     if ('opacity' in material) material.userData.blueprintOpacity = material.opacity;
   });
-  return { root, hull, turret, materials };
+  return { root, hull, turret, materials, winnerHalo, winnerMaterial };
 }
 
 function createGrid(replay: Replay): THREE.Group {
@@ -242,9 +265,19 @@ function createEffect(replay: Replay, event: Frame['events'][number], frame: num
   if (!event.position || event.type === 'MatchFinished') return null;
   const hit = event.type === 'BotHit' || event.type === 'BotDestroyed';
   const muzzle = event.type === 'ShotFired';
-  const color = hit ? 0xffd79a : event.sourceBotId ? palette[event.sourceBotId] : 0x8deaff;
+  const color = hit ? 0xffd79a : event.sourceBotId ? botColor(event.sourceBotId) : 0x8deaff;
+  let effectPosition = event.position;
+  if (muzzle && event.sourceBotId) {
+    const source = replay.frames[frame]?.bots.find(bot => bot.id === event.sourceBotId);
+    if (source) {
+      effectPosition = {
+        x: source.position.x + Math.cos(source.turretAngle) * 0.62,
+        y: source.position.y + Math.sin(source.turretAngle) * 0.62,
+      };
+    }
+  }
   const group = new THREE.Group();
-  group.position.copy(toWorld(event.position, replay, muzzle ? 0.34 : 0.08));
+  group.position.copy(toWorld(effectPosition, replay, muzzle ? 0.4 : 0.08));
   const materials: THREE.MeshBasicMaterial[] = [];
   const lights: THREE.PointLight[] = [];
 
@@ -402,31 +435,63 @@ export function BlueprintArena({
       wallRigs.push(blueprint);
     }
 
-    const tanks = new Map<Bot['id'], TankRig>();
-    for (const id of ['player', 'opponent'] as const) {
-      const tank = createTank(palette[id]);
+    const botIds = [...new Set(replay.frames.flatMap(item => item.bots.map(bot => bot.id)))];
+    const tanks = new Map<string, TankRig>();
+    for (const id of botIds) {
+      const tank = createTank(botColor(id));
       tanks.set(id, tank);
       scene.add(tank.root);
     }
 
-    const bulletOwners = new Map<number, Bot['id']>();
+    const bulletOwners = new Map<number, string>();
     replay.frames.forEach(item => item.bullets.forEach(bullet => bulletOwners.set(bullet.id, bullet.ownerBotId)));
+    replay.frames.forEach(item => item.events.forEach(event => {
+      if (event.type === 'ShotFired' && event.bulletId != null && event.sourceBotId) {
+        bulletOwners.set(event.bulletId, event.sourceBotId);
+      }
+    }));
+    const bulletFlights = new Map<number, BulletFlight>();
+    const pendingShots = new Map<number, Omit<BulletFlight, 'endFrame' | 'end'>>();
+    replay.frames.forEach((item, frameIndex) => item.events.forEach(event => {
+      if (event.type === 'ShotFired' && event.bulletId != null && event.sourceBotId && event.position) {
+        const source = item.bots.find(bot => bot.id === event.sourceBotId);
+        const start = source ? {
+          x: source.position.x + Math.cos(source.turretAngle) * 0.62,
+          y: source.position.y + Math.sin(source.turretAngle) * 0.62,
+        } : event.position;
+        pendingShots.set(event.bulletId, {
+          id: event.bulletId,
+          owner: event.sourceBotId,
+          startFrame: frameIndex,
+          start,
+        });
+      } else if (event.type === 'BotHit' && event.bulletId != null && event.position) {
+        const shot = pendingShots.get(event.bulletId);
+        if (shot) {
+          bulletFlights.set(event.bulletId, {
+            ...shot,
+            endFrame: frameIndex === shot.startFrame ? frameIndex + 0.75 : frameIndex,
+            end: event.position,
+          });
+        }
+      }
+    }));
     const bullets = new Map<number, THREE.Group>();
     for (const [id, owner] of bulletOwners) {
-      const bullet = blueprintBox(0.22, 0.075, 0.08, palette[owner], 0.7).group;
+      const bullet = blueprintBox(0.22, 0.075, 0.08, botColor(owner), 0.7).group;
       bullet.visible = false;
       bullets.set(id, bullet);
       scene.add(bullet);
     }
 
-    const trailLines = new Map<Bot['id'], THREE.Line>();
-    for (const id of ['player', 'opponent'] as const) {
+    const trailLines = new Map<string, THREE.Line>();
+    for (const id of botIds) {
       const points = replay.frames
         .map(item => item.bots.find(bot => bot.id === id))
         .filter((bot): bot is Bot => bot !== undefined)
         .map(bot => toWorld(bot.position, replay, 0.035));
       const material = new THREE.LineDashedMaterial({
-        color: palette[id],
+        color: botColor(id),
         transparent: true,
         opacity: 0.42,
         dashSize: 0.16,
@@ -458,18 +523,16 @@ export function BlueprintArena({
 
     const setDirectorGoal = (
       shot: CinematicShot,
-      bots: Map<Bot['id'], Bot>,
+      bots: Map<string, Bot>,
       state: RenderState,
       timelinePosition: number,
       outputPosition: THREE.Vector3,
       outputTarget: THREE.Vector3,
       outputUp: THREE.Vector3,
     ) => {
-      const player = bots.get('player');
-      const opponent = bots.get('opponent');
+      const visibleBots = [...bots.values()];
       const subject = shot.subject ? bots.get(shot.subject) : undefined;
-      const playerPosition = player ? toWorld(player.position, replay, 0.2) : undefined;
-      const opponentPosition = opponent ? toWorld(opponent.position, replay, 0.2) : undefined;
+      const botPositions = visibleBots.map(bot => toWorld(bot.position, replay, 0.2));
       const subjectPosition = subject ? toWorld(subject.position, replay, 0.24) : undefined;
       const progress = THREE.MathUtils.clamp(
         (timelinePosition - shot.startFrame) / Math.max(1, shot.endFrame - shot.startFrame), 0, 1,
@@ -483,13 +546,22 @@ export function BlueprintArena({
       if (shot.kind === 'projectile' && subjectPosition && subject) {
         const forward = new THREE.Vector3(Math.cos(subject.turretAngle), 0, Math.sin(subject.turretAngle));
         const shoulder = new THREE.Vector3(-forward.z, 0, forward.x).multiplyScalar(
-          subject.id === 'opponent' ? 0.36 : -0.36,
+          botColor(subject.id) % 2 === 0 ? 0.36 : -0.36,
         );
         const bulletStart = state.frame.bullets.find(bullet => bullet.id === shot.bulletId);
         const bulletEnd = state.next.bullets.find(bullet => bullet.id === shot.bulletId) ?? bulletStart;
-        const bulletPosition = bulletStart && bulletEnd
+        let bulletPosition = bulletStart && bulletEnd
           ? toWorld(mixPoint(bulletStart.position, bulletEnd.position, state.fraction), replay, 0.31)
           : undefined;
+        const syntheticFlight = shot.bulletId == null ? undefined : bulletFlights.get(shot.bulletId);
+        if (!bulletPosition && syntheticFlight && timelinePosition >= syntheticFlight.startFrame) {
+          const flightProgress = THREE.MathUtils.clamp(
+            (timelinePosition - syntheticFlight.startFrame)
+              / Math.max(0.001, syntheticFlight.endFrame - syntheticFlight.startFrame),
+            0, 1,
+          );
+          bulletPosition = toWorld(mixPoint(syntheticFlight.start, syntheticFlight.end, flightProgress), replay, 0.31);
+        }
         const muzzleTarget = subjectPosition.clone().addScaledVector(forward, 1.25);
         outputTarget.copy(muzzleTarget);
         if (bulletPosition) outputTarget.lerp(bulletPosition, 0.38 + progress * 0.16);
@@ -505,9 +577,15 @@ export function BlueprintArena({
         height = maxDimension * 0.68;
         fov = 40;
       } else if (shot.kind === 'duel') {
-        if (playerPosition && opponentPosition) {
-          outputTarget.copy(playerPosition).add(opponentPosition).multiplyScalar(0.5);
-          const separation = playerPosition.distanceTo(opponentPosition);
+        if (botPositions.length) {
+          outputTarget.copy(botPositions.reduce((sum, point) => sum.add(point), new THREE.Vector3()))
+            .multiplyScalar(1 / botPositions.length);
+          let separation = 0;
+          for (let first = 0; first < botPositions.length; first += 1) {
+            for (let second = first + 1; second < botPositions.length; second += 1) {
+              separation = Math.max(separation, botPositions[first].distanceTo(botPositions[second]));
+            }
+          }
           radius = Math.max(maxDimension * 0.32, separation * 0.72 + 2.2);
           height = Math.max(maxDimension * 0.3, separation * 0.36 + 1.7);
         } else {
@@ -522,7 +600,7 @@ export function BlueprintArena({
         fov = 42;
       } else {
         const eventFocus = shot.focus ? toWorld(shot.focus, replay, 0.3) : undefined;
-        outputTarget.copy(eventFocus ?? subjectPosition ?? playerPosition ?? opponentPosition ?? new THREE.Vector3());
+        outputTarget.copy(eventFocus ?? subjectPosition ?? botPositions[0] ?? new THREE.Vector3());
         if (shot.kind === 'impact') {
           radius = 3.15;
           height = 1.55;
@@ -657,7 +735,15 @@ export function BlueprintArena({
           score += safe ? 6 : -15;
         }
         if (projected.length >= 2) {
-          const spread = projected[0].distanceTo(projected[1]);
+          let spread = 0;
+          for (let first = 0; first < projected.length; first += 1) {
+            for (let second = first + 1; second < projected.length; second += 1) {
+              spread = Math.max(spread, Math.hypot(
+                projected[first].x - projected[second].x,
+                projected[first].y - projected[second].y,
+              ));
+            }
+          }
           score += Math.min(spread, 0.72) * 8;
           if (spread > 1.45) score -= 12;
         }
@@ -673,7 +759,7 @@ export function BlueprintArena({
     const applyAdaptivePose = (
       pose: AdaptivePose,
       shot: CinematicShot,
-      bots: Map<Bot['id'], Bot>,
+      bots: Map<string, Bot>,
       outputPosition: THREE.Vector3,
       outputTarget: THREE.Vector3,
     ) => {
@@ -714,11 +800,13 @@ export function BlueprintArena({
       animationFrame = requestAnimationFrame(render);
       const state = renderState.current;
       const delta = Math.min(clock.getDelta(), 0.05);
-      const currentBots = new Map<Bot['id'], Bot>();
+      const currentBots = new Map<string, Bot>();
       const director = state.cameraMode === 'auto' || state.cameraMode === 'adaptive'
         ? directorStateAt(state.shotPlan, state.position) : undefined;
+      const lastReplayFrame = replay.frames.length - 1;
+      const matchEnded = state.position >= lastReplayFrame;
 
-      for (const id of ['player', 'opponent'] as const) {
+      for (const id of botIds) {
         const bot = interpolatedBot(state, id);
         const tank = tanks.get(id);
         if (!bot || !tank) continue;
@@ -727,13 +815,23 @@ export function BlueprintArena({
         tank.hull.rotation.y = -bot.bodyAngle;
         tank.turret.rotation.y = -bot.turretAngle;
         const dead = bot.hp <= 0;
+        const winner = replay.result.winnerBotId === id;
+        const faded = dead || (matchEnded && replay.result.winnerBotId != null && !winner);
         tank.root.rotation.z = THREE.MathUtils.lerp(tank.root.rotation.z, dead ? 0.22 : 0, 0.08);
         tank.materials.forEach(material => {
           if ('opacity' in material) {
             const baseOpacity = Number(material.userData.blueprintOpacity ?? material.opacity);
-            material.opacity = dead ? baseOpacity * 0.35 : baseOpacity;
+            material.opacity = faded ? baseOpacity * 0.35 : baseOpacity;
           }
         });
+        tank.winnerHalo.visible = matchEnded && winner;
+        if (tank.winnerHalo.visible) {
+          const tailProgress = THREE.MathUtils.clamp(
+            (state.position - lastReplayFrame) / VISUAL_TAIL_FRAMES, 0, 1,
+          );
+          tank.winnerMaterial.opacity = 0.28 + Math.sin(tailProgress * Math.PI * 3) * 0.08;
+          tank.winnerHalo.scale.setScalar(0.88 + tailProgress * 0.2);
+        }
       }
 
       const visibleBullets = new Set<number>();
@@ -747,6 +845,28 @@ export function BlueprintArena({
         object.scale.setScalar(director?.shot?.kind === 'projectile'
           && director.shot.bulletId === bullet.id ? 1.65 : 1);
         visibleBullets.add(bullet.id);
+      }
+      const trackedFlight = director?.shot?.bulletId == null
+        ? undefined : bulletFlights.get(director.shot.bulletId);
+      if (trackedFlight && !visibleBullets.has(trackedFlight.id)
+        && state.position >= trackedFlight.startFrame && state.position <= trackedFlight.endFrame) {
+        const object = bullets.get(trackedFlight.id);
+        if (object) {
+          const progress = THREE.MathUtils.clamp(
+            (state.position - trackedFlight.startFrame)
+              / Math.max(0.001, trackedFlight.endFrame - trackedFlight.startFrame),
+            0, 1,
+          );
+          const point = mixPoint(trackedFlight.start, trackedFlight.end, progress);
+          object.visible = true;
+          object.position.copy(toWorld(point, replay, 0.31));
+          object.rotation.y = -Math.atan2(
+            trackedFlight.end.y - trackedFlight.start.y,
+            trackedFlight.end.x - trackedFlight.start.x,
+          );
+          object.scale.setScalar(1.65);
+          visibleBullets.add(trackedFlight.id);
+        }
       }
       bullets.forEach((object, id) => { if (!visibleBullets.has(id)) object.visible = false; });
 
@@ -766,7 +886,7 @@ export function BlueprintArena({
         const scale = effect.type === 'BotDestroyed' ? 0.8 + progress * 5.2
           : muzzle ? 0.72 + progress * 2.1 : 0.65 + progress * 2.6;
         effect.group.scale.setScalar(scale);
-        effect.group.rotation.y += delta * 1.8;
+        effect.group.rotation.y = progress * Math.PI * 2.2;
         effect.materials.forEach(material => {
           material.opacity = Math.pow(1 - progress, muzzle ? 2 : 1) * (muzzle ? 1 : 0.9);
         });
@@ -775,8 +895,6 @@ export function BlueprintArena({
         });
       }
 
-      const player = currentBots.get('player');
-      const opponent = currentBots.get('opponent');
       const arenaCenter = new THREE.Vector3(0, 0, 0);
       const mode = state.cameraMode;
       let desiredFov = 38;
@@ -792,9 +910,9 @@ export function BlueprintArena({
         desiredPosition.set(0, maxDimension * 1.02, 0.001);
         desiredUp.set(0, 0, -1);
         desiredFov = 35;
-      } else if (mode === 'player' || mode === 'opponent') {
+      } else if (mode.startsWith('bot:')) {
         desiredUp.set(0, 1, 0);
-        const followed = currentBots.get(mode);
+        const followed = currentBots.get(mode.slice(4));
         if (followed) {
           const botPosition = toWorld(followed.position, replay, 0.25);
           const forward = new THREE.Vector3(Math.cos(followed.bodyAngle), 0, Math.sin(followed.bodyAngle));
@@ -827,10 +945,10 @@ export function BlueprintArena({
             desiredUp.lerpVectors(previousUp, desiredUp, director.mix).normalize();
             desiredFov = THREE.MathUtils.lerp(previousFov, desiredFov, director.mix);
           }
-        } else if (player && opponent) {
-          const playerPosition = toWorld(player.position, replay, 0.18);
-          const opponentPosition = toWorld(opponent.position, replay, 0.18);
-          desiredTarget.copy(playerPosition).add(opponentPosition).multiplyScalar(0.5);
+        } else if (currentBots.size) {
+          const positions = [...currentBots.values()].map(bot => toWorld(bot.position, replay, 0.18));
+          desiredTarget.copy(positions.reduce((sum, point) => sum.add(point), new THREE.Vector3()))
+            .multiplyScalar(1 / positions.length);
           desiredPosition.copy(desiredTarget).add(new THREE.Vector3(
             maxDimension * 0.28, maxDimension * 0.68, maxDimension * 0.46,
           ));

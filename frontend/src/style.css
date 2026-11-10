@@ -144,6 +144,7 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 }
 .camera-modes {
   display: inline-flex;
+  flex-wrap: wrap;
   padding: .18rem;
   gap: .12rem;
   border: 1px solid #294d63;

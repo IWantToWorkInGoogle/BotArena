@@ -2,20 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Replay } from './contracts';
 import { BlueprintArena } from './BlueprintArena';
 import type { CameraMode } from './BlueprintArena';
-import { buildShotPlan, directorPlaybackRate, shotAt } from './cinematicDirector';
+import { buildShotPlan, directorPlaybackRate, shotAt, VISUAL_TAIL_FRAMES } from './cinematicDirector';
+import { botCssColor, botLabel } from './botVisuals';
 import { text } from './text';
 
-const colors = { player: '#53e7ff', opponent: '#ffad58' };
 const copy = text.replay;
 const speeds = [0.5, 1, 2, 4];
-const cameraLabels: Record<CameraMode, string> = {
-  auto: 'Кино',
-  adaptive: 'Разрез',
-  plan: 'План',
-  overview: 'Сверху',
-  player: 'Мой бот',
-  opponent: 'Противник',
-};
+const fixedCameras: Array<{ mode: CameraMode; label: string }> = [
+  { mode: 'auto', label: 'Кино' },
+  { mode: 'adaptive', label: 'Разрез' },
+  { mode: 'plan', label: 'План' },
+  { mode: 'overview', label: 'Сверху' },
+];
 
 export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [position, setPosition] = useState(0);
@@ -24,8 +22,20 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [cameraMode, setCameraMode] = useState<CameraMode>('adaptive');
   const [showTrails, setShowTrails] = useState(true);
   const shotPlan = useMemo(() => buildShotPlan(replay), [replay]);
-  const last = replay.frames.length - 1;
-  const finished = position >= last;
+  const botIds = useMemo(() => [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))], [replay]);
+  const cameraOptions = useMemo(() => [
+    ...fixedCameras,
+    ...botIds.map(id => ({ mode: `bot:${id}` as CameraMode, label: botLabel(id) })),
+  ], [botIds]);
+  const lastFrame = replay.frames.length - 1;
+  const visualEnd = lastFrame + VISUAL_TAIL_FRAMES;
+  const finished = position >= visualEnd;
+
+  useEffect(() => {
+    if (cameraMode.startsWith('bot:') && !botIds.includes(cameraMode.slice(4))) {
+      setCameraMode('adaptive');
+    }
+  }, [botIds, cameraMode]);
 
   useEffect(() => {
     if (!playing || finished) return;
@@ -38,20 +48,21 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
       setPosition(current => {
         const cinematicRate = cameraMode === 'auto' || cameraMode === 'adaptive'
           ? directorPlaybackRate(shotPlan, current) : 1;
-        return Math.min(last, current + elapsed * replay.tickRate * speed * cinematicRate / 1000);
+        return Math.min(visualEnd, current + elapsed * replay.tickRate * speed * cinematicRate / 1000);
       });
       animation = requestAnimationFrame(advance);
     }
 
     animation = requestAnimationFrame(advance);
     return () => cancelAnimationFrame(animation);
-  }, [playing, finished, last, replay.tickRate, speed, cameraMode, shotPlan]);
+  }, [playing, finished, visualEnd, replay.tickRate, speed, cameraMode, shotPlan]);
 
-  const index = Math.floor(position);
+  const index = Math.min(lastFrame, Math.floor(position));
   const frame = replay.frames[index];
-  const next = replay.frames[Math.min(last, index + 1)];
+  const next = replay.frames[Math.min(lastFrame, index + 1)];
+  const fraction = position < lastFrame ? position - Math.floor(position) : 0;
   const winner = replay.result.winnerBotId;
-  const outcome = winner ? copy.winner(copy[winner]) : copy.draw;
+  const outcome = winner ? copy.winner(botLabel(winner)) : copy.draw;
   const reason = !winner && replay.result.reason === 'BotDestroyed'
     ? copy.doubleKnockout : copy.reason[replay.result.reason];
   const activeShot = shotAt(shotPlan, position);
@@ -62,7 +73,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   return (
     <>
       <div className={`arena-stage blueprint-stage${cinematicFocus ? ' cinematic-focus' : ''}`}>
-        <BlueprintArena replay={replay} frame={frame} next={next} fraction={position - index}
+        <BlueprintArena replay={replay} frame={frame} next={next} fraction={fraction}
           position={position} cameraMode={cameraMode} showTrails={showTrails} shotPlan={shotPlan} />
         <div className="blueprint-hud" aria-hidden="true">
           <span>{(cameraMode === 'auto' || cameraMode === 'adaptive') && activeShot
@@ -85,11 +96,11 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
       </div>
       <div className="director-bar">
         <div className="camera-modes" role="group" aria-label="Режим камеры">
-          {(Object.keys(cameraLabels) as CameraMode[]).map(mode => (
+          {cameraOptions.map(({ mode, label }) => (
             <button type="button" key={mode} className={cameraMode === mode ? 'active' : undefined}
               aria-pressed={cameraMode === mode} onClick={() => setCameraMode(mode)}>
               {(mode === 'auto' || mode === 'adaptive') && <span className="live-dot" />}
-              {cameraLabels[mode]}
+              {label}
             </button>
           ))}
         </div>
@@ -104,20 +115,20 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
           if (finished) setPosition(0);
           setPlaying(finished || !playing);
         }}>{finished ? copy.restart : playing ? copy.pause : copy.resume}</button>
-        <input aria-label={copy.position} type="range" min="0" max={last} step="0.01" value={position} onChange={event => {
+        <input aria-label={copy.position} type="range" min="0" max={visualEnd} step="0.01" value={position} onChange={event => {
           setPlaying(false);
           setPosition(Number(event.target.value));
         }} />
-        <output>{copy.time(position / replay.tickRate, last / replay.tickRate)}</output>
+        <output>{copy.time(Math.min(position, lastFrame) / replay.tickRate, lastFrame / replay.tickRate)}</output>
         <select aria-label={copy.speed} value={speed} onChange={event => setSpeed(Number(event.target.value))}>
           {speeds.map(value => <option key={value} value={value}>{copy.speedOption(value)}</option>)}
         </select>
       </div>
       <ul className="health" aria-label={copy.health}>
         {frame.bots.map(bot => (
-          <li key={bot.id} style={{ color: colors[bot.id] }}>
-            <span>{copy[bot.id]}</span>
-            <meter aria-label={copy[bot.id]} min={0} max={bot.maxHp} value={bot.hp} />
+          <li key={bot.id} style={{ color: botCssColor(bot.id) }}>
+            <span>{botLabel(bot.id)}</span>
+            <meter aria-label={botLabel(bot.id)} min={0} max={bot.maxHp} value={bot.hp} />
             <b>{copy.hp(bot.hp, bot.maxHp)}</b>
           </li>
         ))}
