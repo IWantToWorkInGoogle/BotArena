@@ -33,6 +33,16 @@ public class FreeForAllTests
     }
 
     [Fact]
+    public void SimultaneousFailuresLeaveNoWinner()
+    {
+        var config = MatchSetup.Configure(null, [new("aggressive"), new("defensive")]);
+        using var failed = new TestBot(_ => throw new StrategyException("Test failure", 0));
+        var response = Match.Run(config, config.Spawns.ToDictionary(spawn => spawn.Id, _ => (IBotRuntime)failed));
+        Assert.Equal(new MatchResult(null, MatchEndReason.BotError, 0), response.Replay.Result);
+        Assert.All(Assert.Single(response.Replay.Frames).Bots, bot => Assert.True(bot.Forfeited));
+    }
+
+    [Fact]
     public void WheelRequiresMotionToSteerWhileOmniActivelyBrakes()
     {
         var idle = new BotAction(0, 0, default, false);

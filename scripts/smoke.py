@@ -104,7 +104,7 @@ def main():
         "opponents": [
             {"id": "aggressive", "movement": "hover"},
             {"id": "defensive", "movement": "omni"},
-            {"id": "aggressive", "movement": "tracked"},
+            {"id": "defensive", "movement": "tracked"},
         ],
     }
     status, match = request("/api/matches", mixed)

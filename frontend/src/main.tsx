@@ -2,13 +2,13 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { MatchJobStatus, Movement, Opponent, OpponentSlot, Replay, ScriptError, StrategyLanguage } from './contracts';
-import { ReplayPlayer } from './ReplayPlayer';
 import { MatchDiagnosticError, runMatch } from './matchApi';
 import { StrategyHelp } from './StrategyHelp';
 import { text } from './text';
 import './style.css';
 
 const StrategyEditor = lazy(() => import('./StrategyEditor'));
+const ReplayPlayer = lazy(() => import('./ReplayPlayer').then(module => ({ default: module.ReplayPlayer })));
 
 const example = `function tick({ self, enemy }) {
   const { x, y } = self.position;
@@ -162,7 +162,7 @@ function App() {
         const choices: Opponent[] = await response.json();
         setOpponents(choices);
         setSlots(Array.from({ length: 3 }, (_, i) => ({
-          id: choices[i % choices.length]?.id ?? '',
+          id: choices[i % Math.max(1, choices.length)]?.id ?? '',
           movement: 'tracked',
         })));
       } catch {
@@ -263,7 +263,10 @@ function App() {
           <div className="strategy-language">
             <label htmlFor="match-format">{text.matchFormat}</label>
             <select id="match-format" value={opponentCount} disabled={loading}
-              onChange={event => setOpponentCount(Number(event.target.value))}>
+              onChange={event => {
+                setOpponentCount(Number(event.target.value));
+                setScriptError(undefined);
+              }}>
               <option value="1">{text.duelFormat}</option>
               {[2, 3].map(count => <option key={count} value={count}>{text.freeForAll(count + 1)}</option>)}
             </select>
@@ -293,7 +296,9 @@ function App() {
         </form>
         <section className="panel replay">
           <h2>{text.arena}</h2>
-          {replay ? <ReplayPlayer replay={replay} /> :
+          {replay ? <Suspense fallback={<div className="empty">Загружаем WebGL‑сцену…</div>}>
+            <ReplayPlayer replay={replay} />
+          </Suspense> :
             <div className="empty">{text.emptyArena}</div>}
         </section>
       </div>
