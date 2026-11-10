@@ -64,6 +64,9 @@ export const text = {
     input: 'Входной объект state',
     output: 'Объект команды, который возвращает tick',
     nested: 'Вложенные типы',
+    turretFunctions: 'Готовые команды башни',
+    turretIntro: 'Верните команду в поле aim. Каждый тик выбирайте один способ управления башней: aim, aimDirection или turretTurn. Команды не стреляют автоматически.',
+    turretPythonImport: 'В Python сначала добавьте import botarena as bot.',
     inputFields: [
       ['tick', 'number', 'Номер тика. Первый вызов получает 0.'],
       ['self', 'Bot', 'Состояние вашего танка.'],
@@ -74,8 +77,15 @@ export const text = {
     outputFields: [
       ['leftTrack?', 'number', 'Тяга левой гусеницы от −1 до 1. По умолчанию 0.'],
       ['rightTrack?', 'number', 'Тяга правой гусеницы от −1 до 1. По умолчанию 0.'],
-      ['aimDirection?', 'Vec2', 'Направление башни. Отсутствие поля или { x: 0, y: 0 } сохраняет угол.'],
+      ['aim?', 'Aim', 'Готовая команда: bot.scan(), bot.aimAt(point) или bot.holdAim().'],
+      ['aimDirection?', 'Vec2', 'Направление башни. Нулевой вектор сохраняет угол. Без любой команды башни угол также сохраняется.'],
+      ['turretTurn?', 'number', 'Вращение башни: от −1 (против часовой стрелки) до 1 (по часовой). 0 плавно останавливает вращение. Нельзя сочетать с aimDirection или aim.'],
       ['shoot?', 'boolean', 'Попытка выстрела. По умолчанию false.'],
+    ],
+    turretRows: [
+      ['bot.scan(options?)', 'Aim', 'Круговое вращение. speed: от 0 (не включая) до 1, по умолчанию 0.5; direction: clockwise или counterclockwise, по умолчанию clockwise.'],
+      ['bot.aimAt(point)', 'Aim', 'Наведение на мировую точку { x, y }. Соблюдает скорость поворота башни.'],
+      ['bot.holdAim()', 'Aim', 'Фиксация текущего мирового угла башни независимо от корпуса.'],
     ],
     nestedFields: [
       ['Vec2', '{ x: number, y: number }', 'X растёт вправо, Y вниз.'],
