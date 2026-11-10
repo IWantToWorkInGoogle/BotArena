@@ -33,20 +33,29 @@ def finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def read_vector(value, key):
+    vector = value.get(key, {"x": 0, "y": 0})
+    if not isinstance(vector, dict):
+        return None
+    x, y = vector.get("x"), vector.get("y")
+    return {"x": x, "y": y} if finite(x) and finite(y) else None
+
+
 def action_from(value):
     if not isinstance(value, dict):
         return None
     left = value.get("leftTrack", 0)
     right = value.get("rightTrack", 0)
-    aim = value.get("aimDirection", {"x": 0, "y": 0})
+    turn = value.get("turn", 0)
+    throttle = value.get("throttle", 0)
+    aim = read_vector(value, "aimDirection")
+    thrust = read_vector(value, "thrust")
     shoot = value.get("shoot", False)
-    if not finite(left) or not finite(right) or not isinstance(aim, dict) or type(shoot) is not bool:
-        return None
-    x, y = aim.get("x"), aim.get("y")
-    if not finite(x) or not finite(y):
+    if not all(finite(item) for item in (left, right, turn, throttle)) or aim is None or thrust is None or type(shoot) is not bool:
         return None
     return {"leftTrack": min(1, max(-1, left)), "rightTrack": min(1, max(-1, right)),
-            "aimDirection": {"x": x, "y": y}, "shoot": shoot}
+            "aimDirection": aim, "thrust": thrust, "turn": min(1, max(-1, turn)),
+            "throttle": min(1, max(-1, throttle)), "shoot": shoot}
 
 
 scope = {"__name__": "__strategy__"}

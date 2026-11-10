@@ -222,3 +222,7 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 .error-details:empty { display: none; }
 .error-details div { display: flex; gap: .35rem; padding: .15rem .4rem; border-radius: .3rem; background: #493037; }
 .error-details dd { margin: 0; font: .8rem ui-monospace, monospace; }
+.opponent-slot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; border: 1px solid #293f57; border-radius: .4rem; padding: .4rem .55rem .55rem; margin: 0; min-width: 0; }
+.opponent-slot legend { color: #a6b9ce; font-size: .85rem; padding: 0 .25rem; }
+
+.health small { display: block; font-size: .72rem; opacity: .8; }

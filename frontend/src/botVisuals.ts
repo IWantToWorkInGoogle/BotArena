@@ -1,6 +1,10 @@
+import { text } from './text';
+
 const fixedColors: Record<string, number> = {
   player: 0x53e7ff,
   opponent: 0xffad58,
+  "opponent-2": 0x9bf06f,
+  "opponent-3": 0xd887ff,
 };
 
 const extraColors = [
@@ -29,12 +33,10 @@ export function botCssColor(id: string) {
   return `#${botColor(id).toString(16).padStart(6, '0')}`;
 }
 
-export function botLabel(id: string) {
-  if (id === 'player') return 'Ваш бот';
-  if (id === 'opponent') return 'Противник';
-  return id;
+export function botLabel(id: string, multiple = false) {
+  return text.botLabel(id, multiple);
 }
 
-export function botDirectorLabel(id: string) {
-  return botLabel(id).toLocaleUpperCase('ru-RU');
+export function botDirectorLabel(id: string, multiple = false) {
+  return botLabel(id, multiple).toLocaleUpperCase('ru-RU');
 }

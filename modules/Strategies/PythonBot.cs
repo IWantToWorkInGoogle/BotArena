@@ -78,7 +78,9 @@ public sealed class PythonBot : IBotRuntime
         var reply = Exchange(observation, TickLimit, observation.Tick);
         if (reply.Action is not { } action ||
             !double.IsFinite(action.LeftTrack) || !double.IsFinite(action.RightTrack) ||
-            !double.IsFinite(action.AimDirection.X) || !double.IsFinite(action.AimDirection.Y))
+            !double.IsFinite(action.AimDirection.X) || !double.IsFinite(action.AimDirection.Y) ||
+            !double.IsFinite(action.Thrust.X) || !double.IsFinite(action.Thrust.Y) || !double.IsFinite(action.Turn) ||
+            !double.IsFinite(action.Throttle))
             throw new StrategyException("Некорректная команда Python.", observation.Tick);
         return action with { LeftTrack = Math.Clamp(action.LeftTrack, -1, 1), RightTrack = Math.Clamp(action.RightTrack, -1, 1) };
     }

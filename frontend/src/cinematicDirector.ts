@@ -134,7 +134,7 @@ function chooseAzimuth(replay: Replay, shot: Omit<CinematicShot, 'id' | 'azimuth
   return best;
 }
 
-function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
+function collectHighlights(replay: Replay, lastFrame: number, multiple: boolean): Highlight[] {
   const hits: Array<{
     frame: number;
     focus?: Point;
@@ -177,19 +177,20 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
 
   const lastDestructionFrame = destructions.reduce((latest, item) => Math.max(latest, item.frame), -1);
   const finalDestructions = destructions.filter(item => item.frame === lastDestructionFrame);
-  const doubleKnockout = finalDestructions.length > 1 && replay.result.winnerBotId == null;
-  const finalDestruction = finalDestructions.at(-1);
+  const endedByDestruction = replay.result.reason === 'BotDestroyed' && lastDestructionFrame === lastFrame;
+  const simultaneousKnockout = endedByDestruction && finalDestructions.length > 1 && replay.result.winnerBotId == null;
+  const finalDestruction = endedByDestruction ? finalDestructions.at(-1) : undefined;
   const destruction: Highlight | undefined = finalDestruction ? {
     kind: 'finale',
     startFrame: Math.max(0, finalDestruction.frame - 13),
     endFrame: lastFrame,
-    focus: doubleKnockout
+    focus: simultaneousKnockout
       ? midpoint(finalDestructions.flatMap(item => item.focus ? [item.focus] : []))
       : finalDestruction.focus,
-    subject: doubleKnockout ? undefined : finalDestruction.subject,
-    bulletId: doubleKnockout ? undefined : finalDestruction.bulletId,
-    label: doubleKnockout ? 'ДВОЙНОЙ НОКАУТ'
-      : finalDestruction.subject ? `ФИНАЛЬНЫЙ УДАР · ${botDirectorLabel(finalDestruction.subject)}`
+    subject: simultaneousKnockout ? undefined : finalDestruction.subject,
+    bulletId: simultaneousKnockout ? undefined : finalDestruction.bulletId,
+    label: simultaneousKnockout ? (multiple ? 'ВСЕ РОБОТЫ ВЫБЫЛИ' : 'ДВОЙНОЙ НОКАУТ')
+      : finalDestruction.subject ? `ФИНАЛЬНЫЙ УДАР · ${botDirectorLabel(finalDestruction.subject, multiple)}`
       : 'ФИНАЛЬНЫЙ УДАР',
   } : undefined;
   const finaleStart = destruction?.startFrame ?? Math.max(0, lastFrame - 12);
@@ -217,7 +218,7 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
           focus: shot.focus,
           subject: shot.subject ?? hit.subject,
           bulletId: hit.bulletId,
-          label: shot.subject ? `ВЫСТРЕЛ · ${botDirectorLabel(shot.subject)}` : 'ПОЛЁТ СНАРЯДА',
+          label: shot.subject ? `ВЫСТРЕЛ · ${botDirectorLabel(shot.subject, multiple)}` : 'ПОЛЁТ СНАРЯДА',
         });
       }
       sequence.push({
@@ -227,7 +228,7 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
         focus: hit.focus,
         subject: hit.subject,
         bulletId: hit.bulletId,
-        label: hit.subject ? `ПОПАДАНИЕ · ${botDirectorLabel(hit.subject)}` : 'ПОПАДАНИЕ',
+        label: hit.subject ? `ПОПАДАНИЕ · ${botDirectorLabel(hit.subject, multiple)}` : 'ПОПАДАНИЕ',
       });
       return sequence;
     });
@@ -237,7 +238,7 @@ function collectHighlights(replay: Replay, lastFrame: number): Highlight[] {
     startFrame: Math.max(0, lastFrame - 12),
     endFrame: lastFrame,
     subject: replay.result.winnerBotId ?? undefined,
-    label: replay.result.winnerBotId ? `ФИНАЛ · ${botDirectorLabel(replay.result.winnerBotId)}` : 'ФИНАЛ БОЯ',
+    label: replay.result.winnerBotId ? `ФИНАЛ · ${botDirectorLabel(replay.result.winnerBotId, multiple)}` : 'ФИНАЛ БОЯ',
   };
   return [...impacts, destruction ?? fallbackFinale];
 }
@@ -257,7 +258,7 @@ function fillerShots(startFrame: number, endFrame: number, serial: number, botId
     result.push({
       kind: isOpening ? 'establishing' : absolute % 3 === 0 && subject ? 'follow' : 'duel',
       label: isOpening ? 'ОБЩИЙ ПЛАН' : absolute % 3 === 0
-        ? `СОПРОВОЖДЕНИЕ · ${subject ? botDirectorLabel(subject) : 'ЦЕЛЬ'}` : 'БОЕВОЙ КОНТАКТ',
+        ? `СОПРОВОЖДЕНИЕ · ${subject ? botDirectorLabel(subject, botIds.length > 2) : 'ЦЕЛЬ'}` : 'БОЕВОЙ КОНТАКТ',
       startFrame: start,
       endFrame: end,
       subject: isOpening ? undefined : subject,
@@ -271,9 +272,9 @@ function fillerShots(startFrame: number, endFrame: number, serial: number, botId
 export function buildShotPlan(replay: Replay): ShotPlan {
   const lastFrame = Math.max(0, replay.frames.length - 1);
   if (lastFrame === 0) return { shots: [], lastFrame };
-  const highlights = collectHighlights(replay, lastFrame).sort((a, b) => a.startFrame - b.startFrame);
   const raw: Array<Omit<CinematicShot, 'id' | 'azimuth'>> = [];
   const botIds = [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))];
+  const highlights = collectHighlights(replay, lastFrame, botIds.length > 2).sort((a, b) => a.startFrame - b.startFrame);
   let cursor = 0;
   let fillerSerial = 0;
 

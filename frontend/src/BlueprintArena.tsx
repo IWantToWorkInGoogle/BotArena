@@ -146,22 +146,48 @@ function blueprintWall(width: number, height: number, depth: number): WallRig {
   return { group, surface, edges: edgeMaterial, section: sectionMaterial, box: new THREE.Box3() };
 }
 
-function createTank(color: number): TankRig {
+function createTank(color: number, movement?: Bot['movement']): TankRig {
   const root = new THREE.Group();
   const hull = new THREE.Group();
   const turret = new THREE.Group();
   const materials: THREE.Material[] = [];
 
-  const chassis = blueprintBox(0.72, 0.24, 0.52, color, 0.24);
-  chassis.group.position.y = 0.2;
+  const hovering = movement === 'hover';
+  const wheeled = movement === 'wheeled';
+  const omni = movement === 'omni';
+  const chassis = blueprintBox(hovering ? 0.63 : 0.72, hovering ? 0.13 : 0.24,
+    wheeled ? 0.38 : 0.52, color, 0.24);
+  chassis.group.position.y = hovering ? 0.27 : 0.2;
   hull.add(chassis.group);
   materials.push(...chassis.materials);
 
   for (const side of [-1, 1]) {
-    const track = blueprintBox(0.75, 0.15, 0.11, color, 0.1);
-    track.group.position.set(0, 0.13, side * 0.31);
-    hull.add(track.group);
-    materials.push(...track.materials);
+    if (wheeled || omni) {
+      for (const axle of [-1, 1]) {
+        const wheel = blueprintBox(omni ? 0.12 : 0.22, 0.15, omni ? 0.18 : 0.12, color, 0.16);
+        wheel.group.position.set(axle * 0.23, 0.13, side * 0.28);
+        if (omni) wheel.group.rotation.y = axle * side * Math.PI / 4;
+        hull.add(wheel.group);
+        materials.push(...wheel.materials);
+      }
+    } else {
+      const runner = blueprintBox(hovering ? 0.54 : 0.75, hovering ? 0.08 : 0.15,
+        hovering ? 0.16 : 0.11, color, 0.1);
+      runner.group.position.set(0, hovering ? 0.21 : 0.13, side * 0.31);
+      hull.add(runner.group);
+      materials.push(...runner.materials);
+    }
+  }
+
+  if (omni) {
+    const headingGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0.26, 0.34, -0.11),
+      new THREE.Vector3(0.43, 0.34, 0),
+      new THREE.Vector3(0.26, 0.34, 0.11),
+    ]);
+    const headingMaterial = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1 });
+    hull.add(new THREE.Line(headingGeometry, headingMaterial));
+    materials.push(headingMaterial);
   }
 
   const turretGeometry = new THREE.CylinderGeometry(0.19, 0.22, 0.16, 10);
@@ -435,10 +461,14 @@ export function BlueprintArena({
       wallRigs.push(blueprint);
     }
 
-    const botIds = [...new Set(replay.frames.flatMap(item => item.bots.map(bot => bot.id)))];
+    const roster = new Map<string, Bot['movement']>();
+    for (const frame of replay.frames)
+      for (const bot of frame.bots)
+        if (!roster.has(bot.id)) roster.set(bot.id, bot.movement);
+    const botIds = [...roster.keys()];
     const tanks = new Map<string, TankRig>();
-    for (const id of botIds) {
-      const tank = createTank(botColor(id));
+    for (const [id, movement] of roster) {
+      const tank = createTank(botColor(id), movement);
       tanks.set(id, tank);
       scene.add(tank.root);
     }
@@ -816,7 +846,7 @@ export function BlueprintArena({
         tank.turret.rotation.y = -bot.turretAngle;
         const dead = bot.hp <= 0;
         const winner = replay.result.winnerBotId === id;
-        const faded = dead || (matchEnded && replay.result.winnerBotId != null && !winner);
+        const faded = dead || bot.forfeited || (matchEnded && replay.result.winnerBotId != null && !winner);
         tank.root.rotation.z = THREE.MathUtils.lerp(tank.root.rotation.z, dead ? 0.22 : 0, 0.08);
         tank.materials.forEach(material => {
           if ('opacity' in material) {

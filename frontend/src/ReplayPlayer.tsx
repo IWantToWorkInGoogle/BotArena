@@ -23,10 +23,11 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [showTrails, setShowTrails] = useState(true);
   const shotPlan = useMemo(() => buildShotPlan(replay), [replay]);
   const botIds = useMemo(() => [...new Set(replay.frames.flatMap(frame => frame.bots.map(bot => bot.id)))], [replay]);
+  const multiple = botIds.length > 2;
   const cameraOptions = useMemo(() => [
     ...fixedCameras,
-    ...botIds.map(id => ({ mode: `bot:${id}` as CameraMode, label: botLabel(id) })),
-  ], [botIds]);
+    ...botIds.map(id => ({ mode: `bot:${id}` as CameraMode, label: botLabel(id, multiple) })),
+  ], [botIds, multiple]);
   const lastFrame = replay.frames.length - 1;
   const visualEnd = lastFrame + VISUAL_TAIL_FRAMES;
   const finished = position >= visualEnd;
@@ -62,9 +63,9 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const next = replay.frames[Math.min(lastFrame, index + 1)];
   const fraction = position < lastFrame ? position - Math.floor(position) : 0;
   const winner = replay.result.winnerBotId;
-  const outcome = winner ? copy.winner(botLabel(winner)) : copy.draw;
+  const outcome = winner ? copy.winner(botLabel(winner, multiple)) : copy.draw;
   const reason = !winner && replay.result.reason === 'BotDestroyed'
-    ? copy.doubleKnockout : copy.reason[replay.result.reason];
+    ? (multiple ? copy.allDestroyed : copy.doubleKnockout) : copy.reason[replay.result.reason];
   const activeShot = shotAt(shotPlan, position);
   const cinematicFocus = (cameraMode === 'auto' || cameraMode === 'adaptive')
     && (activeShot?.kind === 'projectile' || activeShot?.kind === 'impact' || activeShot?.kind === 'finale');
@@ -127,9 +128,9 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
       <ul className="health" aria-label={copy.health}>
         {frame.bots.map(bot => (
           <li key={bot.id} style={{ color: botCssColor(bot.id) }}>
-            <span>{botLabel(bot.id)}</span>
-            <meter aria-label={botLabel(bot.id)} min={0} max={bot.maxHp} value={bot.hp} />
-            <b>{copy.hp(bot.hp, bot.maxHp)}</b>
+            <span>{botLabel(bot.id, multiple)}{bot.movement && <small>{text.movements[bot.movement]}</small>}</span>
+            <meter aria-label={botLabel(bot.id, multiple)} min={0} max={bot.maxHp} value={bot.hp} />
+            <b>{bot.forfeited ? copy.forfeited : copy.hp(bot.hp, bot.maxHp)}</b>
           </li>
         ))}
       </ul>
