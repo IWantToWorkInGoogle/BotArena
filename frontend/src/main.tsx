@@ -245,7 +245,6 @@ function App() {
           <div className="strategy-language">
             <label htmlFor="movement">{text.movementLabel}</label>
             <select id="movement" value={movement} disabled={loading}
-              aria-describedby={movement === 'omni' ? 'movement-description' : undefined}
               onChange={event => {
                 setMovement(event.target.value as Movement);
                 setScriptError(undefined);
@@ -253,7 +252,10 @@ function App() {
               {modelOptions}
             </select>
           </div>
-          {movement === 'omni' && <p className="muted" id="movement-description">{text.omniDescription}</p>}
+          <details className="movement-help">
+            <summary>{text.movementHelpTitle}</summary>
+            <p>{text.movementDescriptions[movement]}</p>
+          </details>
           <Suspense fallback={<div className="code-editor" />}>
             <StrategyEditor key={`${movement}-${language}`} language={language} initialCode={code} onChange={updateCode} />
           </Suspense>

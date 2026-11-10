@@ -17,6 +17,7 @@ internal static class MatchWorker
             MatchSetup.GetOpponents(request) is not { } opponents) return 1;
 
         var config = MatchSetup.Configure(request.Movement, opponents);
+        var navigator = new ArenaNavigator(config);
         var runtimes = new Dictionary<string, IBotRuntime>();
         var startingBotId = config.Spawns[0].Id;
         MatchWorkerResult result;
@@ -26,8 +27,7 @@ internal static class MatchWorker
             for (var i = 0; i < opponents.Count; i++)
             {
                 startingBotId = config.Spawns[i + 1].Id;
-                runtimes.Add(startingBotId, StrategyLanguages.Create(StrategyLanguages.JavaScript,
-                    OpponentCatalog.GetCode(opponents[i].Id!)));
+                runtimes.Add(startingBotId, new BuiltInOpponent(opponents[i].Id!, navigator));
             }
             result = new(Match.Run(config, runtimes), null);
         }
