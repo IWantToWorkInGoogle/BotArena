@@ -17,7 +17,7 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 .primary { background: #153b50; border-color: #3dc9f1; font-weight: 700; }
 .error { color: #ffc0a8; overflow-wrap: anywhere; }
-.arena, .empty { width: 100%; aspect-ratio: 16 / 10; display: block; background: #0b1422; border: 1px solid #293f57; border-radius: .45rem; }
+.arena, .empty, .blueprint-viewport { width: 100%; aspect-ratio: 16 / 10; display: block; background: #0b1422; border: 1px solid #293f57; border-radius: .45rem; }
 .empty { display: grid; place-items: center; text-align: center; padding: 1rem; color: #a6b9ce; }
 .controls { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; margin-top: .8rem; }
 .controls input { flex: 1 1 6rem; min-width: 0; accent-color: #3dc9f1; }
@@ -38,9 +38,164 @@ header { display: flex; align-items: baseline; gap: 1.1rem; margin-bottom: .7rem
 .strategy-fields th:first-child { width: 23%; }
 .strategy-fields th:nth-child(2) { width: 33%; }
 .arena-stage { position: relative; }
-.arena, .empty { max-height: max(15rem, calc(100dvh - 12rem)); }
-.outcome { position: absolute; top: .65rem; left: 50%; transform: translateX(-50%); margin: 0; padding: .45rem .75rem; border: 1px solid #476383; border-radius: .4rem; background: #101e30; width: max-content; max-width: 90%; text-align: center; pointer-events: none; }
+.arena, .empty, .blueprint-viewport { max-height: max(15rem, calc(100dvh - 12rem)); }
+.outcome { position: absolute; z-index: 7; top: .65rem; left: 50%; transform: translateX(-50%); margin: 0; padding: .45rem .75rem; border: 1px solid #476383; border-radius: .4rem; background: #101e30; width: max-content; max-width: 90%; text-align: center; pointer-events: none; }
 .winning-bot { filter: drop-shadow(0 0 4px currentColor); }
+.blueprint-stage {
+  overflow: hidden;
+  border-radius: .48rem;
+  background: #04121f;
+  box-shadow: inset 0 0 0 1px #26617c, 0 0 2.2rem rgb(36 171 221 / .09);
+}
+.blueprint-stage.cinematic-focus::before,
+.blueprint-stage.cinematic-focus::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  width: 100%;
+  height: 5.5%;
+  background: #02070d;
+  pointer-events: none;
+  animation: letterbox-in .28s ease-out both;
+}
+.blueprint-stage.cinematic-focus::before { top: 0; transform-origin: top; }
+.blueprint-stage.cinematic-focus::after { bottom: 0; transform-origin: bottom; }
+.blueprint-viewport { position: relative; overflow: hidden; border-color: #245b75; }
+.blueprint-canvas { width: 100%; height: 100%; display: block; }
+.blueprint-hud {
+  position: absolute;
+  inset: .7rem .75rem auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #7bdcf7;
+  font: 600 .67rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .12em;
+  text-shadow: 0 0 .65rem #31c7f5;
+  pointer-events: none;
+  z-index: 6;
+}
+.blueprint-hud::before, .blueprint-hud::after {
+  content: '';
+  position: absolute;
+  top: 1.1rem;
+  width: 2.4rem;
+  height: .4rem;
+  border-top: 1px solid rgb(83 231 255 / .48);
+}
+.blueprint-hud::before { left: 0; border-left: 1px solid rgb(83 231 255 / .48); }
+.blueprint-hud::after { right: 0; border-right: 1px solid rgb(83 231 255 / .48); }
+.blueprint-reticle {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 1.25rem;
+  height: 1.25rem;
+  transform: translate(-50%, -50%);
+  opacity: .18;
+  pointer-events: none;
+  z-index: 3;
+}
+.blueprint-reticle::before {
+  content: '';
+  position: absolute;
+  inset: .25rem;
+  border: 1px solid #73ddff;
+  border-radius: 50%;
+}
+.blueprint-reticle i { position: absolute; background: #73ddff; }
+.blueprint-reticle i:first-child { left: 0; top: 50%; width: 100%; height: 1px; }
+.blueprint-reticle i:last-child { left: 50%; top: 0; width: 1px; height: 100%; }
+.director-cue {
+  position: absolute;
+  z-index: 6;
+  left: .9rem;
+  bottom: .78rem;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: .15rem .55rem;
+  padding: .42rem .58rem .4rem;
+  border-left: 2px solid #53e7ff;
+  background: linear-gradient(90deg, rgb(3 18 29 / .9), rgb(3 18 29 / .28));
+  color: #72d9f6;
+  font: 600 .58rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .1em;
+  text-shadow: 0 0 .55rem rgb(49 199 245 / .55);
+  pointer-events: none;
+}
+.director-cue strong {
+  grid-column: 1 / -1;
+  color: #e5fbff;
+  font-size: .7rem;
+  letter-spacing: .075em;
+}
+.director-cue em {
+  color: #ffcb87;
+  font-style: normal;
+}
+.director-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem 1rem;
+  flex-wrap: wrap;
+  margin-top: .72rem;
+}
+.camera-modes {
+  display: inline-flex;
+  padding: .18rem;
+  gap: .12rem;
+  border: 1px solid #294d63;
+  border-radius: .42rem;
+  background: #081522;
+}
+.camera-modes button {
+  display: inline-flex;
+  align-items: center;
+  gap: .38rem;
+  border: 0;
+  padding: .36rem .52rem;
+  color: #8da9b9;
+  background: transparent;
+  font-size: .77rem;
+}
+.camera-modes button.active {
+  color: #dff9ff;
+  background: #15364a;
+  box-shadow: inset 0 0 0 1px #3f9abb;
+}
+.live-dot {
+  width: .38rem;
+  height: .38rem;
+  border-radius: 50%;
+  background: #53e7ff;
+  box-shadow: 0 0 .55rem #53e7ff;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+.trail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  cursor: pointer;
+  color: #8da9b9;
+}
+.trail-toggle input { accent-color: #53e7ff; }
+.replay-controls { margin-top: .55rem; }
+.replay-controls button { min-width: 6.4rem; }
+.webgl-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  color: #ffc0a8;
+}
+@keyframes live-pulse { 50% { opacity: .45; transform: scale(.72); } }
+@keyframes letterbox-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .live-dot, .blueprint-stage.cinematic-focus::before, .blueprint-stage.cinematic-focus::after { animation: none; }
+}
 .health { list-style: none; margin: .75rem 0 0; padding: 0; display: grid; gap: .3rem; }
 .health li { display: grid; grid-template-columns: minmax(6rem, max-content) minmax(2rem, 1fr) minmax(6rem, max-content); align-items: center; gap: .5rem; }
 .health b { text-align: right; font-variant-numeric: tabular-nums; }
