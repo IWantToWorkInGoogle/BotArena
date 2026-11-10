@@ -6,6 +6,7 @@ internal static class Match
     {
         var duel = new Duel(config);
         var frames = new List<GameFrame> { duel.CaptureFrame() };
+        var behaviorSamples = new List<BehaviorSample>();
         var actions = new Dictionary<string, BotAction>();
         var failures = new List<string>();
         ScriptError? error = null;
@@ -13,12 +14,18 @@ internal static class Match
         {
             actions.Clear();
             failures.Clear();
+            var tickSamples = new List<BehaviorSample>();
             foreach (var bot in frames[^1].Bots)
             {
                 if (bot.Hp == 0 || bot.Forfeited) continue;
                 try
                 {
-                    actions[bot.Id] = runtimes[bot.Id].Decide(duel.Observe(bot.Id));
+                    var observation = duel.Observe(bot.Id);
+                    var action = runtimes[bot.Id].Decide(observation);
+                    actions[bot.Id] = action;
+                    tickSamples.Add(new(observation.Tick, bot.Id, observation.Self.Position,
+                        observation.Self.BodyAngle, observation.Self.TurretAngle,
+                        observation.Enemy is not null, action));
                 }
                 catch (StrategyException failure)
                 {
@@ -33,8 +40,9 @@ internal static class Match
                 if (duel.Result is not null) break;
             }
             duel.Step(actions);
+            behaviorSamples.AddRange(tickSamples);
             frames.Add(duel.CaptureFrame());
         }
-        return new(new(config.TickRate, config.Arena, frames, duel.Result!), error);
+        return new(new(config.TickRate, config.Arena, frames, duel.Result!, behaviorSamples), error);
     }
 }

@@ -11,6 +11,7 @@ export interface CinematicShot {
   label: string;
   startFrame: number;
   endFrame: number;
+  eventFrame?: number;
   subject?: Bot['id'];
   focus?: Point;
   bulletId?: number;
@@ -29,6 +30,7 @@ interface Highlight {
   kind: 'projectile' | 'impact' | 'finale';
   startFrame: number;
   endFrame: number;
+  eventFrame?: number;
   focus?: Point;
   subject?: Bot['id'];
   bulletId?: number;
@@ -184,6 +186,7 @@ function collectHighlights(replay: Replay, lastFrame: number, multiple: boolean)
     kind: 'finale',
     startFrame: Math.max(0, finalDestruction.frame - 13),
     endFrame: lastFrame,
+    eventFrame: finalDestruction.frame,
     focus: simultaneousKnockout
       ? midpoint(finalDestructions.flatMap(item => item.focus ? [item.focus] : []))
       : finalDestruction.focus,
@@ -215,6 +218,7 @@ function collectHighlights(replay: Replay, lastFrame: number, multiple: boolean)
           // Give the camera two frames of anticipation even for point-blank shots.
           startFrame: Math.max(0, shot.frame - 2),
           endFrame: impactStart,
+          eventFrame: shot.frame,
           focus: shot.focus,
           subject: shot.subject ?? hit.subject,
           bulletId: hit.bulletId,
@@ -225,6 +229,7 @@ function collectHighlights(replay: Replay, lastFrame: number, multiple: boolean)
         kind: 'impact',
         startFrame: impactStart,
         endFrame: Math.min(finaleStart, impactStart + 8),
+        eventFrame: hit.frame,
         focus: hit.focus,
         subject: hit.subject,
         bulletId: hit.bulletId,
@@ -237,6 +242,7 @@ function collectHighlights(replay: Replay, lastFrame: number, multiple: boolean)
     kind: 'finale',
     startFrame: Math.max(0, lastFrame - 12),
     endFrame: lastFrame,
+    eventFrame: lastFrame,
     subject: replay.result.winnerBotId ?? undefined,
     label: replay.result.winnerBotId ? `ФИНАЛ · ${botDirectorLabel(replay.result.winnerBotId, multiple)}` : 'ФИНАЛ БОЯ',
   };
