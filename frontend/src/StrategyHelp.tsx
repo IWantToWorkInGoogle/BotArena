@@ -37,6 +37,9 @@ export function StrategyHelp({ language, movement }: { language: StrategyLanguag
         ...movementFields[movement],
         ...text.help.sharedFields,
       ]} />
+      <p>{text.help.turretIntro}</p>
+      {language === 'python' && <p>{text.help.turretPythonImport}</p>}
+      <Fields title={text.help.turretFunctions} rows={text.help.turretRows} />
       <Fields title={text.help.nested} rows={text.help.nestedFields} />
     </details>
   );

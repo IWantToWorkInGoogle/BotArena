@@ -250,7 +250,7 @@ public sealed class Duel : ISimulationEngine
         var bot = bots[index];
         var current = new BotMotion(bot.BodyAngle, bodyTurnRates[index], bot.Velocity, bot.Speed);
         var proposed = movement[index].Propose(current, action, bot.Position, StepSeconds, canRotate: true);
-        var turretAngle = TurnTurret(index, bot.TurretAngle, action.AimDirection);
+        var turretAngle = TurnTurret(index, bot.TurretAngle, action);
         var hull = Body(bot with { BodyAngle = proposed.Heading });
         if (!Inside(hull) || WallImpact(hull, default) <= 1)
         {
@@ -272,8 +272,16 @@ public sealed class Duel : ISimulationEngine
         };
     }
 
-    private double TurnTurret(int index, double current, Vec2 aim)
+    private double TurnTurret(int index, double current, BotAction action)
     {
+        if (action.TurretTurn is { } turn)
+        {
+            var target = MotionMath.Input(turn) * config.MaxTurretTurnSpeed;
+            turretTurnRates[index] = MotionMath.ApproachRate(turretTurnRates[index], target, StepSeconds, config.TurnResponseSeconds);
+            return MotionMath.Angle(current + turretTurnRates[index] * StepSeconds);
+        }
+
+        var aim = action.AimDirection;
         if (aim == default || !double.IsFinite(aim.X) || !double.IsFinite(aim.Y))
         {
             turretTurnRates[index] = 0;

@@ -34,7 +34,8 @@ public record BotObservation(int Tick, BotState Self, BotState? Enemy, BulletSta
 {
     public IReadOnlyList<BotState> Enemies { get; init; } = [];
 }
-public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, bool Shoot)
+public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, bool Shoot,
+    double? TurretTurn = null)
 {
     public Vec2 Thrust { get; init; }
     public double Turn { get; init; }
