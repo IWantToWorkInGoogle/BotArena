@@ -15,6 +15,17 @@ internal static class MotionMath
     public static double Angle(double angle) => Math.Atan2(Math.Sin(angle), Math.Cos(angle));
     public static double ApproachRate(double current, double target, double seconds, double responseSeconds) =>
         current + (target - current) * (1 - Math.Exp(-seconds / responseSeconds));
+    public static Vec2 Thrust(Vec2 value) =>
+        double.IsFinite(value.X) && double.IsFinite(value.Y) ? ClampLength(value, 1) : default;
+
+    public static Vec2 ClampLength(Vec2 vector, double limit)
+    {
+        if (double.Hypot(vector.X, vector.Y) <= limit) return vector;
+        var scale = Math.Max(Math.Abs(vector.X), Math.Abs(vector.Y));
+        var direction = new Vec2(vector.X / scale, vector.Y / scale);
+        return direction * (limit / double.Hypot(direction.X, direction.Y));
+    }
+
 }
 
 internal sealed class TrackedMovement(MatchConfig config) : IMovementModel
@@ -59,10 +70,8 @@ public sealed class HoverMovement : IMovementModel
     public BotMotion Propose(BotMotion current, BotAction action, Vec2 position, double seconds, bool canRotate)
     {
         // Thrust uses world coordinates. Turning the hull does not rotate momentum.
-        var thrust = double.IsFinite(action.Thrust.X) && double.IsFinite(action.Thrust.Y)
-            ? ClampLength(action.Thrust, 1)
-            : default;
-        var velocity = ClampLength(current.Velocity * Math.Exp(-drag * seconds) +
+        var thrust = MotionMath.Thrust(action.Thrust);
+        var velocity = MotionMath.ClampLength(current.Velocity * Math.Exp(-drag * seconds) +
             thrust * (acceleration * seconds), maxSpeed);
         var targetRate = MotionMath.Input(action.Turn) * maxTurnRate;
         var turnRate = canRotate ? MotionMath.ApproachRate(current.TurnRate, targetRate, seconds, 0.2) : 0;
@@ -70,14 +79,38 @@ public sealed class HoverMovement : IMovementModel
         return new(heading, turnRate, velocity, double.Hypot(velocity.X, velocity.Y));
     }
 
-    private static Vec2 ClampLength(Vec2 vector, double limit)
-    {
-        if (double.Hypot(vector.X, vector.Y) <= limit) return vector;
-        var scale = Math.Max(Math.Abs(vector.X), Math.Abs(vector.Y));
-        var direction = new Vec2(vector.X / scale, vector.Y / scale);
-        return direction * (limit / double.Hypot(direction.X, direction.Y));
-    }
-
     private static double NonNegative(double value, string name) =>
         double.IsFinite(value) && value >= 0 ? value : throw new ArgumentOutOfRangeException(name);
+}
+
+/// <summary>A wheeled chassis with a fixed wheelbase and steering proportional to speed.</summary>
+public sealed class WheeledMovement : IMovementModel
+{
+    public string Id => "wheeled";
+
+    public BotMotion Propose(BotMotion current, BotAction action, Vec2 position, double seconds, bool canRotate)
+    {
+        var throttle = MotionMath.Input(action.Throttle);
+        var targetSpeed = throttle * (throttle < 0 ? 2 : 5);
+        var speed = current.Speed + Math.Clamp(targetSpeed - current.Speed, -8 * seconds, 8 * seconds);
+        var steering = MotionMath.Input(action.Turn) * 0.55;
+        var turnRate = canRotate ? speed * Math.Tan(steering) / 0.8 : 0;
+        var heading = MotionMath.Angle(current.Heading + turnRate * seconds);
+        return new(heading, turnRate, Vec2.FromAngle(heading) * speed, speed);
+    }
+}
+
+/// <summary>An omnidirectional chassis that actively tracks its requested velocity.</summary>
+public sealed class OmniMovement : IMovementModel
+{
+    public string Id => "omni";
+
+    public BotMotion Propose(BotMotion current, BotAction action, Vec2 position, double seconds, bool canRotate)
+    {
+        var target = MotionMath.Thrust(action.Thrust) * 4;
+        var velocity = current.Velocity + MotionMath.ClampLength(target - current.Velocity, 10 * seconds);
+        var turnRate = canRotate ? MotionMath.ApproachRate(current.TurnRate, MotionMath.Input(action.Turn) * 3, seconds, 0.2) : 0;
+        var heading = MotionMath.Angle(current.Heading + turnRate * seconds);
+        return new(heading, turnRate, velocity, double.Hypot(velocity.X, velocity.Y));
+    }
 }

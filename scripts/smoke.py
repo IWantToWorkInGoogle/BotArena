@@ -24,13 +24,13 @@ def run(code, opponent="aggressive"):
     return request("/api/matches", {"botCode": code, "opponentId": opponent})
 
 
-def check_replay(replay):
+def check_replay(replay, bot_count=2):
     frames = replay["frames"]
     assert replay["tickRate"] == 20
     assert [frame["tick"] for frame in frames] == list(range(len(frames)))
     assert replay["result"]["durationTicks"] == len(frames) - 1 <= 200
     assert frames[-1]["events"][-1]["type"] == "MatchFinished"
-    assert all(len(frame["bots"]) == 2 for frame in frames)
+    assert all(len(frame["bots"]) == bot_count for frame in frames)
 
 
 def main():
@@ -97,6 +97,26 @@ def main():
     assert player["movement"] == "hover" and player["velocity"]["y"] < 0
     assert opponent["movement"] == "tracked"
     assert request("/api/matches", {**payload, "movement": "unknown"})[0] == 400
+
+    mixed = {
+        "botCode": "function tick() { return { throttle: 1, turn: -0.5 }; }",
+        "movement": "wheeled",
+        "opponents": [
+            {"id": "aggressive", "movement": "hover"},
+            {"id": "defensive", "movement": "omni"},
+            {"id": "aggressive", "movement": "tracked"},
+        ],
+    }
+    status, match = request("/api/matches", mixed)
+    assert status == 200 and match["error"] is None
+    replay = match["replay"]
+    check_replay(replay, bot_count=4)
+    assert [bot["movement"] for bot in replay["frames"][0]["bots"]] == ["wheeled", "hover", "omni", "tracked"]
+    for index in range(4):
+        assert any(frame["bots"][index]["speed"] > 0 for frame in replay["frames"][1:])
+    assert request("/api/matches", {**mixed, "opponents": []})[0] == 400
+    assert request("/api/matches", {**mixed, "opponents": [None]})[0] == 400
+    assert request("/api/matches", {**mixed, "opponents": mixed["opponents"] * 2})[0] == 400
 
     print("HTTP smoke checks passed")
 

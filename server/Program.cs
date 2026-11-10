@@ -47,8 +47,8 @@ static IResult? Validate(MatchRequest request)
 {
     if (string.IsNullOrWhiteSpace(request.BotCode) || request.BotCode.Length > 16_384)
         return Results.BadRequest(new { error = "Нужен код стратегии длиной от 1 до 16 384 символов." });
-    if (!OpponentCatalog.Opponents.Any(opponent => opponent.Id == request.OpponentId))
-        return Results.BadRequest(new { error = "Выберите существующего противника." });
+    if (MatchSetup.GetOpponents(request) is null)
+        return Results.BadRequest(new { error = "Выберите от одного до трёх соперников с доступными моделями движения." });
     if (request.Language is { } language && !StrategyLanguages.Available().Contains(language))
         return Results.BadRequest(new { error = "Выбранный язык стратегии недоступен." });
     if (!MovementCatalog.Supports(request.Movement))

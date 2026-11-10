@@ -47,13 +47,15 @@ def action_from(value):
     left = value.get("leftTrack", 0)
     right = value.get("rightTrack", 0)
     turn = value.get("turn", 0)
+    throttle = value.get("throttle", 0)
     aim = read_vector(value, "aimDirection")
     thrust = read_vector(value, "thrust")
     shoot = value.get("shoot", False)
-    if not all(finite(item) for item in (left, right, turn)) or aim is None or thrust is None or type(shoot) is not bool:
+    if not all(finite(item) for item in (left, right, turn, throttle)) or aim is None or thrust is None or type(shoot) is not bool:
         return None
     return {"leftTrack": min(1, max(-1, left)), "rightTrack": min(1, max(-1, right)),
-            "aimDirection": aim, "thrust": thrust, "turn": min(1, max(-1, turn)), "shoot": shoot}
+            "aimDirection": aim, "thrust": thrust, "turn": min(1, max(-1, turn)),
+            "throttle": min(1, max(-1, throttle)), "shoot": shoot}
 
 
 scope = {"__name__": "__strategy__"}

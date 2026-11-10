@@ -47,17 +47,30 @@ internal static class OpponentCatalog
                 y: enemy.position.y - self.position.y
             } : { x: dx, y: dy };
             const aligned = Math.abs(wrapped(Math.atan2(aim.y, aim.x) - self.turretAngle)) < 0.055;
+            const weapon = { aimDirection: aim, shoot: !!enemy && aligned && self.canShoot };
+            if (self.movement === "hover" || self.movement === "omni") {
+                const damping = self.movement === "hover" ? 0.45 : 0;
+                return { ...weapon, turn, thrust: {
+                    x: dx * 0.65 - self.velocity.x * damping,
+                    y: dy * 0.65 - self.velocity.y * damping
+                }};
+            }
+            if (self.movement === "wheeled") {
+                const steer = Math.max(-1, Math.min(1, error * 1.8));
+                return { ...weapon, throttle: Math.abs(error) < 1.4 ? throttle + 0.28 * Math.abs(steer) : 0.35, turn: steer };
+            }
             return {
+                ...weapon,
                 leftTrack: throttle + turn,
-                rightTrack: throttle - turn,
-                aimDirection: aim,
-                shoot: !!enemy && aligned && self.canShoot
+                rightTrack: throttle - turn
             };
         }
         """;
 
     public static IReadOnlyList<Opponent> Opponents { get; } =
         Array.AsReadOnly(Catalog.Select(item => item.Info).ToArray());
+
+    public static bool Supports(string? id) => Catalog.Any(item => item.Info.Id == id);
 
     public static string GetCode(string id) =>
         Catalog.Single(item => item.Info.Id == id).Script + "\n" + Driving;

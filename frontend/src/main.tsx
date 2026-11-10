@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { MatchJobStatus, Movement, Opponent, Replay, ScriptError, StrategyLanguage } from './contracts';
+import type { MatchJobStatus, Movement, Opponent, OpponentSlot, Replay, ScriptError, StrategyLanguage } from './contracts';
 import { ReplayPlayer } from './ReplayPlayer';
 import { MatchDiagnosticError, runMatch } from './matchApi';
 import { StrategyHelp } from './StrategyHelp';
@@ -86,17 +86,66 @@ const hoverExamples = {
 `,
 };
 
+const wheeledExamples = {
+  javascript: `function tick({ tick, self, enemy }) {
+  const action = { throttle: 0.8, turn: tick < 18 ? -0.7 : 0.55 };
+  if (enemy) {
+    action.aimDirection = { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y };
+    action.shoot = self.canShoot;
+  }
+  return action;
+}`,
+  python: `def tick(state):
+    action = {"throttle": 0.8, "turn": -0.7 if state["tick"] < 18 else 0.55}
+    enemy = state["enemy"]
+    if enemy is not None:
+        position = state["self"]["position"]
+        action["aimDirection"] = {"x": enemy["position"]["x"] - position["x"],
+                                  "y": enemy["position"]["y"] - position["y"]}
+        action["shoot"] = state["self"]["canShoot"]
+    return action
+`,
+};
+
+const omniExamples = {
+  javascript: `function tick({ tick, self, enemy }) {
+  const thrust = tick < 10 ? { x: 0, y: -1 } : tick < 22 ? { x: 1, y: 0 } : { x: 0, y: 0 };
+  if (!enemy) return { thrust };
+  return { thrust, aimDirection: { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y },
+    shoot: self.canShoot };
+}`,
+  python: `def tick(state):
+    tick = state["tick"]
+    action = {"thrust": {"x": int(10 <= tick < 22), "y": -int(tick < 10)}}
+    enemy = state["enemy"]
+    if enemy is not None:
+        position = state["self"]["position"]
+        action["aimDirection"] = {"x": enemy["position"]["x"] - position["x"],
+                                  "y": enemy["position"]["y"] - position["y"]}
+        action["shoot"] = state["self"]["canShoot"]
+    return action
+`,
+};
+
+const modelOptions = Object.entries(text.movements).map(([id, label]) =>
+  <option key={id} value={id}>{label}</option>);
+
 function App() {
   const [languages, setLanguages] = useState<StrategyLanguage[]>(['javascript']);
   const [language, setLanguage] = useState<StrategyLanguage>('javascript');
   const [movement, setMovement] = useState<Movement>('tracked');
-  const [drafts, setDrafts] = useState({ tracked: trackedExamples, hover: hoverExamples });
+  const [drafts, setDrafts] = useState({ tracked: trackedExamples, hover: hoverExamples, wheeled: wheeledExamples, omni: omniExamples });
   const code = drafts[movement][language];
   const updateCode = useCallback((value: string) => {
     setDrafts(previous => ({ ...previous, [movement]: { ...previous[movement], [language]: value } }));
   }, [language, movement]);
   const [opponents, setOpponents] = useState<Opponent[]>([]);
-  const [opponentId, setOpponentId] = useState('');
+  const [opponentCount, setOpponentCount] = useState(1);
+  const [slots, setSlots] = useState<OpponentSlot[]>([]);
+  const participants = slots.slice(0, opponentCount);
+  function updateSlot(index: number, value: Partial<OpponentSlot>) {
+    setSlots(previous => previous.map((slot, i) => i === index ? { ...slot, ...value } : slot));
+  }
   const [loading, setLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<MatchJobStatus>();
   const activeRun = useRef<AbortController | null>(null);
@@ -112,7 +161,10 @@ function App() {
         if (!response.ok) throw new Error();
         const choices: Opponent[] = await response.json();
         setOpponents(choices);
-        setOpponentId(choices[0]?.id ?? '');
+        setSlots(Array.from({ length: 3 }, (_, i) => ({
+          id: choices[i % choices.length]?.id ?? '',
+          movement: 'tracked',
+        })));
       } catch {
         if (!controller.signal.aborted) setError(text.opponentsUnavailable);
       }
@@ -139,7 +191,7 @@ function App() {
     setScriptError(undefined);
     setReplay(undefined);
     try {
-      const match = await runMatch(code, opponentId, language, movement, controller.signal, setJobStatus);
+      const match = await runMatch(code, participants, language, movement, controller.signal, setJobStatus);
       setReplay(match.replay);
       setScriptError(match.error ?? undefined);
     } catch (problem) {
@@ -161,7 +213,6 @@ function App() {
       ? text.opponents[opponent.id as keyof typeof text.opponents] : opponent;
   }
 
-  const opponent = opponents.find(item => item.id === opponentId);
 
   return (
     <main>
@@ -186,8 +237,7 @@ function App() {
                 setMovement(event.target.value as Movement);
                 setScriptError(undefined);
               }}>
-              <option value="tracked">{text.movements.tracked}</option>
-              <option value="hover">{text.movements.hover}</option>
+              {modelOptions}
             </select>
           </div>
           <Suspense fallback={<div className="code-editor" />}>
@@ -198,7 +248,7 @@ function App() {
             <div role="alert" className="error-card">
               <div className="error-heading">
                 <strong>{text.diagnostic.title}</strong>
-                <span>{text.replay[scriptError.botId]}</span>
+                <span>{text.botLabel(scriptError.botId, opponentCount > 1)}</span>
               </div>
               <p>{scriptError.line == null ? scriptError.message :
                 scriptError.tick == null ? text.diagnostic.load : text.diagnostic.tickFailure}</p>
@@ -210,12 +260,31 @@ function App() {
             </div>
           )}
           <StrategyHelp language={language} movement={movement} />
-          <label htmlFor="opponent">{text.opponent}</label>
-          <select id="opponent" value={opponentId} onChange={event => setOpponentId(event.target.value)}>
-            {opponents.map(item => <option key={item.id} value={item.id}>{opponentText(item).name}</option>)}
-          </select>
-          {opponent && <p className="muted">{opponentText(opponent).description}</p>}
-          <button className="primary" disabled={loading || !opponentId || !code.trim() || code.length > 16384}>
+          <div className="strategy-language">
+            <label htmlFor="match-format">{text.matchFormat}</label>
+            <select id="match-format" value={opponentCount} disabled={loading}
+              onChange={event => setOpponentCount(Number(event.target.value))}>
+              <option value="1">{text.duelFormat}</option>
+              {[2, 3].map(count => <option key={count} value={count}>{text.freeForAll(count + 1)}</option>)}
+            </select>
+          </div>
+          {participants.map((slot, i) => {
+            const label = text.botLabel(i === 0 ? 'opponent' : `opponent-${i + 1}`, opponentCount > 1);
+            return (
+              <fieldset key={i} className="opponent-slot" disabled={loading}>
+                <legend>{label}</legend>
+                <select id={i === 0 ? 'opponent' : `opponent-${i + 1}`} aria-label={`${label} · ${text.strategy}`}
+                  value={slot.id} onChange={event => updateSlot(i, { id: event.target.value })}>
+                  {opponents.map(item => <option key={item.id} value={item.id}>{opponentText(item).name}</option>)}
+                </select>
+                <select aria-label={`${label} · ${text.movementLabel}`} value={slot.movement}
+                  onChange={event => updateSlot(i, { movement: event.target.value as Movement })}>
+                  {modelOptions}
+                </select>
+              </fieldset>
+            );
+          })}
+          <button className="primary" disabled={loading || participants.length !== opponentCount || participants.some(slot => !slot.id) || !code.trim() || code.length > 16384}>
             {loading ? text.working : text.start}
           </button>
           {code.length > 16384 && <p role="alert" className="error">{text.strategyTooLong}</p>}

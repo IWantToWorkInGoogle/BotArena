@@ -19,6 +19,13 @@ function Fields({ title, rows }: { title: string; rows: readonly (readonly [stri
   );
 }
 
+const movementFields = {
+  tracked: text.help.trackedFields,
+  hover: text.help.hoverFields,
+  wheeled: text.help.wheeledFields,
+  omni: text.help.omniFields,
+};
+
 export function StrategyHelp({ language, movement }: { language: StrategyLanguage; movement: Movement }) {
   return (
     <details>
@@ -27,7 +34,7 @@ export function StrategyHelp({ language, movement }: { language: StrategyLanguag
       <Fields title={text.help.input} rows={text.help.inputFields} />
       {movement === 'hover' && <p>{text.help.hoverIntro}</p>}
       <Fields title={text.help.output} rows={[
-        ...(movement === 'hover' ? text.help.hoverFields : text.help.trackedFields),
+        ...movementFields[movement],
         ...text.help.sharedFields,
       ]} />
       <Fields title={text.help.nested} rows={text.help.nestedFields} />

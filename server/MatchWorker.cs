@@ -13,19 +13,31 @@ internal static class MatchWorker
     public static async Task<int> RunChildAsync()
     {
         var request = await JsonSerializer.DeserializeAsync<MatchRequest>(Console.OpenStandardInput(), Json);
-        if (request?.BotCode is null || request.OpponentId is null || !MovementCatalog.Supports(request.Movement)) return 1;
+        if (request?.BotCode is null || !MovementCatalog.Supports(request.Movement) ||
+            MatchSetup.GetOpponents(request) is not { } opponents) return 1;
 
+        var config = MatchSetup.Configure(request.Movement, opponents);
+        var runtimes = new Dictionary<string, IBotRuntime>();
+        var startingBotId = config.Spawns[0].Id;
         MatchWorkerResult result;
         try
         {
-            using var bot = StrategyLanguages.Create(request.Language, request.BotCode);
-            using var opponent = StrategyLanguages.Create(StrategyLanguages.JavaScript, OpponentCatalog.GetCode(request.OpponentId));
-            var config = MovementCatalog.ConfigurePlayer(MatchConfig.Classic, request.Movement);
-            result = new(Match.Run(config, bot, opponent), null);
+            runtimes.Add(startingBotId, StrategyLanguages.Create(request.Language, request.BotCode));
+            for (var i = 0; i < opponents.Count; i++)
+            {
+                startingBotId = config.Spawns[i + 1].Id;
+                runtimes.Add(startingBotId, StrategyLanguages.Create(StrategyLanguages.JavaScript,
+                    OpponentCatalog.GetCode(opponents[i].Id!)));
+            }
+            result = new(Match.Run(config, runtimes), null);
         }
         catch (StrategyException error)
         {
-            result = new(null, error.Message, new("player", error.Tick, error.Message, error.Line, error.Column));
+            result = new(null, error.Message, new(startingBotId, error.Tick, error.Message, error.Line, error.Column));
+        }
+        finally
+        {
+            foreach (var runtime in runtimes.Values) runtime.Dispose();
         }
         await JsonSerializer.SerializeAsync(Console.OpenStandardOutput(), result, Json);
         return 0;

@@ -52,7 +52,6 @@ public sealed class Duel : ISimulationEngine
     private readonly List<BulletState> bullets = [];
     private readonly List<GameEvent> events = [];
     private readonly int[] cooldowns;
-    private readonly bool[] forfeited;
     private readonly IMovementModel[] movement;
     private readonly double[] bodyTurnRates;
     private readonly double[] turretTurnRates;
@@ -76,7 +75,6 @@ public sealed class Duel : ISimulationEngine
         walls = config.Arena.Walls.Select(w =>
             new Hitbox(new(w.X + w.Width / 2, w.Y + w.Height / 2), 0, w.Width, w.Height)).ToArray();
         cooldowns = new int[bots.Length];
-        forfeited = new bool[bots.Length];
         bodyTurnRates = new double[bots.Length];
         turretTurnRates = new double[bots.Length];
         var grid = new SpatialGrid();
@@ -151,17 +149,21 @@ public sealed class Duel : ISimulationEngine
             Finish(new(null, MatchEndReason.TimeLimit, tick));
     }
 
-    public void Forfeit(string botId)
+    public void Forfeit(string botId) => ForfeitAll([botId]);
+
+    public void ForfeitAll(IEnumerable<string> botIds)
     {
         EnsureRunning();
-        var index = FindBot(botId);
-        if (!IsActive(index)) return;
-        forfeited[index] = true;
-        bots[index] = bots[index] with { Speed = 0, Velocity = default };
+        var failed = botIds.Select(FindBot).ToArray();
+        foreach (var index in failed)
+        {
+            if (!IsActive(index)) continue;
+            bots[index] = bots[index] with { Forfeited = true, Speed = 0, Velocity = default };
+        }
         FinishIfEliminated(MatchEndReason.BotError);
     }
 
-    private bool IsActive(int index) => !forfeited[index] && bots[index].Hp > 0;
+    private bool IsActive(int index) => !bots[index].Forfeited && bots[index].Hp > 0;
 
     private int FindBot(string id) => indices.TryGetValue(id, out var index)
         ? index : throw new ArgumentException("Unknown bot ID.", nameof(id));

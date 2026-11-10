@@ -6,13 +6,21 @@ export const text = {
   language: 'ru',
   title: 'BotArena · Match Lab',
   brand: '● BotArena',
-  mode: 'Match Lab / дуэль 1×1',
+  mode: 'Match Lab',
+  matchFormat: 'Участники',
+  duelFormat: 'Дуэль · 2 робота',
+  freeForAll: (count: number) => `Каждый за себя · ${count} робота`,
+  botLabel: (id: string, multiple: boolean) => {
+    if (id === 'player') return 'Ваш бот';
+    if (id === 'opponent') return multiple ? 'Противник 1' : 'Противник';
+    return /^opponent-\d+$/.test(id) ? `Противник ${id.slice(9)}` : id;
+  },
   strategy: 'Стратегия бота',
   languageLabel: 'Язык стратегии',
   languages,
   strategyLanguage: (language: StrategyLanguage) => `${languages[language]} · tick(state)`,
   movementLabel: 'Модель движения',
-  movements: { tracked: 'Танк', hover: 'Воздушная подушка' },
+  movements: { tracked: 'Танк', hover: 'Воздушная подушка', wheeled: 'Колёсное шасси', omni: 'Омни-шасси' },
   hoverExampleComment: 'Разгон вверх, поворот корпуса в скольжении, затем торможение.',
   strategyComment: 'Пока цель скрыта, объезжаем стену сверху.',
   opponent: 'Противник',
@@ -51,7 +59,9 @@ export const text = {
     speed: 'Скорость реплея',
     speedOption: (speed: number) => `${speed}×`,
     time: (position: number, duration: number) => `${position.toFixed(1)} / ${duration.toFixed(1)} с`,
-    health: 'Здоровье танков',
+    health: 'Здоровье роботов',
+    forfeited: 'Выбыл по ошибке',
+    allDestroyed: 'все роботы выбыли',
     hp: (hp: number, maxHp: number) => `${hp} / ${maxHp} HP`,
     draw: 'Ничья',
     winner: (bot: string) => `Победитель — ${bot.toLowerCase()}`,
@@ -69,9 +79,10 @@ export const text = {
     nested: 'Вложенные типы',
     inputFields: [
       ['tick', 'number', 'Номер тика. Первый вызов получает 0.'],
-      ['self', 'Bot', 'Состояние вашего танка.'],
-      ['enemy', 'Bot | null', 'Состояние противника. Если между танками есть стена, приходит null.'],
-      ['bullets', 'Bullet[]', 'Активные снаряды обоих танков.'],
+      ['self', 'Bot', 'Состояние вашего робота.'],
+      ['enemy', 'Bot | null', 'Ближайший видимый противник. Если цели нет, приходит null.'],
+      ['enemies', 'Bot[]', 'Все видимые действующие противники.'],
+      ['bullets', 'Bullet[]', 'Активные снаряды всех участников.'],
       ['arena', 'Arena', 'Размеры арены и координаты стен.'],
     ],
     trackedFields: [
@@ -82,14 +93,22 @@ export const text = {
       ['aimDirection?', 'Vec2', 'Направление башни. Отсутствие поля или { x: 0, y: 0 } сохраняет угол.'],
       ['shoot?', 'boolean', 'Попытка выстрела. По умолчанию false.'],
     ],
-    hoverIntro: 'Голубой след в реплее показывает направление скорости. Поворот корпуса не меняет направление скольжения.',
+    hoverIntro: 'Пунктирный след в реплее показывает направление скорости. Поворот корпуса не меняет направление скольжения.',
     hoverFields: [
       ['thrust?', 'Vec2', 'Тяга в координатах арены. Длина вектора ограничена единицей. Нулевая тяга оставляет робота скользить.'],
       ['turn?', 'number', 'Поворот корпуса от −1 до 1. По умолчанию 0.'],
     ],
+    wheeledFields: [
+      ['throttle?', 'number', 'Газ или задний ход от −1 до 1. По умолчанию 0.'],
+      ['turn?', 'number', 'Положение руля от −1 до 1. На месте корпус не поворачивается.'],
+    ],
+    omniFields: [
+      ['thrust?', 'Vec2', 'Команда скорости в координатах арены. Нулевой вектор активно тормозит.'],
+      ['turn?', 'number', 'Независимый поворот корпуса от −1 до 1. По умолчанию 0.'],
+    ],
     nestedFields: [
       ['Vec2', '{ x: number, y: number }', 'X растёт вправо, Y вниз.'],
-      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, velocity: Vec2, movement: string, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
+      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, velocity: Vec2, movement: string, forfeited: boolean, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
       ['Bullet', '{ id: number, ownerBotId: string, position: Vec2, direction: Vec2 }', 'Владелец, координаты и направление снаряда.'],
       ['Arena', '{ width: number, height: number, walls: Wall[] }', 'Размеры арены и прямоугольные препятствия.'],
       ['Wall', '{ x: number, y: number, width: number, height: number }', 'Координаты верхнего левого угла и размеры стены.'],

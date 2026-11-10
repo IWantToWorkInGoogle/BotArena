@@ -18,7 +18,8 @@ public record BotState(string Id, Vec2 Position, double BodyAngle, double Turret
 {
     public Vec2 Velocity { get; init; }
     public string Movement { get; init; } = "tracked";
-    public bool CanShoot => Hp > 0 && ReloadingTime <= 0;
+    public bool Forfeited { get; init; }
+    public bool CanShoot => !Forfeited && Hp > 0 && ReloadingTime <= 0;
 }
 
 public record BulletState(int Id, string OwnerBotId, Vec2 Position, Vec2 Direction);
@@ -37,6 +38,7 @@ public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, 
 {
     public Vec2 Thrust { get; init; }
     public double Turn { get; init; }
+    public double Throttle { get; init; }
 }
 [JsonConverter(typeof(JsonStringEnumConverter<MatchEndReason>))]
 public enum MatchEndReason { BotDestroyed, TimeLimit, BotError }

@@ -48,9 +48,11 @@ public sealed class JavaScriptBot : IBotRuntime
                     const aimDirection = readVector(action.aimDirection);
                     const thrust = readVector(action.thrust);
                     const turn = action.turn;
+                    const throttle = action.throttle;
                     const shoot = action.shoot;
                     if ((left !== undefined && !finite(left)) || (right !== undefined && !finite(right)) ||
                         !aimDirection || !thrust || (turn !== undefined && !finite(turn)) ||
+                        (throttle !== undefined && !finite(throttle)) ||
                         (shoot !== undefined && typeof shoot !== 'boolean')) return '';
                     return stringify({
                         __proto__: null,
@@ -59,6 +61,7 @@ public sealed class JavaScriptBot : IBotRuntime
                         aimDirection,
                         thrust,
                         turn: min(1, max(-1, turn ?? 0)),
+                        throttle: min(1, max(-1, throttle ?? 0)),
                         shoot: shoot === true
                     });
                 })(JSON.parse, JSON.stringify, Number.isFinite, Array.isArray, Math.min, Math.max)
@@ -84,7 +87,7 @@ public sealed class JavaScriptBot : IBotRuntime
             if (output.Length == 0)
             {
                 throw new StrategyException(
-                    "tick(state) должна вернуть объект с числовыми leftTrack, rightTrack и turn, векторами aimDirection и thrust, а также логическим shoot.", observation.Tick);
+                    "tick(state) должна вернуть объект с числовыми leftTrack, rightTrack, throttle и turn, векторами aimDirection и thrust, а также логическим shoot.", observation.Tick);
             }
             return JsonSerializer.Deserialize<BotAction>(output, Json)!;
         }
