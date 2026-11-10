@@ -1,9 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { MatchJobStatus, Opponent, Replay, ScriptError, StrategyLanguage } from './contracts';
+import type { MatchJobStatus, Movement, Opponent, OpponentSlot, Replay, ScriptError, StrategyLanguage } from './contracts';
 import { MatchDiagnosticError, runMatch } from './matchApi';
-import { botLabel } from './botVisuals';
 import { StrategyHelp } from './StrategyHelp';
 import { text } from './text';
 import './style.css';
@@ -33,7 +32,7 @@ const example = `function tick({ self, enemy }) {
   };
 }`;
 
-const examples = {
+const trackedExamples = {
   javascript: example,
   python: `def tick(state):
     enemy = state["enemy"]
@@ -52,16 +51,113 @@ const examples = {
 `,
 };
 
+const hoverExamples = {
+  javascript: `function tick({ tick, self, enemy }) {
+  // ${text.hoverExampleComment}
+  if (tick < 10) return { thrust: { x: 0, y: -1 } };
+  if (tick < 22) return { turn: 1 };
+
+  const thrust = { x: -self.velocity.x * 1.4, y: -self.velocity.y * 1.4 };
+  if (!enemy) return { thrust };
+  return {
+    thrust,
+    aimDirection: { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y },
+    shoot: self.canShoot,
+  };
+}`,
+  python: `def tick(state):
+    # ${text.hoverExampleComment}
+    if state["tick"] < 10:
+        return {"thrust": {"x": 0, "y": -1}}
+    if state["tick"] < 22:
+        return {"turn": 1}
+
+    self = state["self"]
+    velocity = self["velocity"]
+    action = {"thrust": {"x": -velocity["x"] * 1.4, "y": -velocity["y"] * 1.4}}
+    enemy = state["enemy"]
+    if enemy is not None:
+        action["aimDirection"] = {
+            "x": enemy["position"]["x"] - self["position"]["x"],
+            "y": enemy["position"]["y"] - self["position"]["y"],
+        }
+        action["shoot"] = self["canShoot"]
+    return action
+`,
+};
+
+const wheeledExamples = {
+  javascript: `function tick({ tick, self, enemy }) {
+  const action = { throttle: 0.8, turn: tick < 18 ? -0.7 : 0.55 };
+  if (enemy) {
+    action.aimDirection = { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y };
+    action.shoot = self.canShoot;
+  }
+  return action;
+}`,
+  python: `def tick(state):
+    action = {"throttle": 0.8, "turn": -0.7 if state["tick"] < 18 else 0.55}
+    enemy = state["enemy"]
+    if enemy is not None:
+        position = state["self"]["position"]
+        action["aimDirection"] = {"x": enemy["position"]["x"] - position["x"],
+                                  "y": enemy["position"]["y"] - position["y"]}
+        action["shoot"] = state["self"]["canShoot"]
+    return action
+`,
+};
+
+const omniExamples = {
+  javascript: `function tick({ tick, self, enemy }) {
+  if (tick < 18) return { thrust: { x: 0, y: -1 } };
+  if (tick < 30) return {}; // ${text.omniBrakeComment}
+  if (tick < 46) return { thrust: { x: 0, y: 1 } };
+  if (!enemy) return {};
+  return {
+    aimDirection: { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y },
+    shoot: self.canShoot,
+  };
+}`,
+  python: `def tick(state):
+    tick = state["tick"]
+    if tick < 18:
+        return {"thrust": {"x": 0, "y": -1}}
+    if tick < 30:
+        return {}  # ${text.omniBrakeComment}
+    if tick < 46:
+        return {"thrust": {"x": 0, "y": 1}}
+
+    self = state["self"]
+    enemy = state["enemy"]
+    if enemy is None:
+        return {}
+    return {
+        "aimDirection": {"x": enemy["position"]["x"] - self["position"]["x"],
+                         "y": enemy["position"]["y"] - self["position"]["y"]},
+        "shoot": self["canShoot"],
+    }
+`,
+};
+
+const modelOptions = Object.entries(text.movements).map(([id, label]) =>
+  <option key={id} value={id}>{label}</option>);
+
 function App() {
   const [languages, setLanguages] = useState<StrategyLanguage[]>(['javascript']);
   const [language, setLanguage] = useState<StrategyLanguage>('javascript');
-  const [drafts, setDrafts] = useState(examples);
-  const code = drafts[language];
+  const [movement, setMovement] = useState<Movement>('tracked');
+  const [drafts, setDrafts] = useState({ tracked: trackedExamples, hover: hoverExamples, wheeled: wheeledExamples, omni: omniExamples });
+  const code = drafts[movement][language];
   const updateCode = useCallback((value: string) => {
-    setDrafts(previous => ({ ...previous, [language]: value }));
-  }, [language]);
+    setDrafts(previous => ({ ...previous, [movement]: { ...previous[movement], [language]: value } }));
+  }, [language, movement]);
   const [opponents, setOpponents] = useState<Opponent[]>([]);
-  const [opponentId, setOpponentId] = useState('');
+  const [opponentCount, setOpponentCount] = useState(1);
+  const [slots, setSlots] = useState<OpponentSlot[]>([]);
+  const participants = slots.slice(0, opponentCount);
+  function updateSlot(index: number, value: Partial<OpponentSlot>) {
+    setSlots(previous => previous.map((slot, i) => i === index ? { ...slot, ...value } : slot));
+  }
   const [loading, setLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<MatchJobStatus>();
   const activeRun = useRef<AbortController | null>(null);
@@ -77,7 +173,10 @@ function App() {
         if (!response.ok) throw new Error();
         const choices: Opponent[] = await response.json();
         setOpponents(choices);
-        setOpponentId(choices[0]?.id ?? '');
+        setSlots(Array.from({ length: 3 }, (_, i) => ({
+          id: choices[i % Math.max(1, choices.length)]?.id ?? '',
+          movement: 'tracked',
+        })));
       } catch {
         if (!controller.signal.aborted) setError(text.opponentsUnavailable);
       }
@@ -104,7 +203,7 @@ function App() {
     setScriptError(undefined);
     setReplay(undefined);
     try {
-      const match = await runMatch(code, opponentId, language, controller.signal, setJobStatus);
+      const match = await runMatch(code, participants, language, movement, controller.signal, setJobStatus);
       setReplay(match.replay);
       setScriptError(match.error ?? undefined);
     } catch (problem) {
@@ -126,7 +225,6 @@ function App() {
       ? text.opponents[opponent.id as keyof typeof text.opponents] : opponent;
   }
 
-  const opponent = opponents.find(item => item.id === opponentId);
 
   return (
     <main>
@@ -137,19 +235,36 @@ function App() {
           <div className="strategy-language">
             <span className="muted" id="strategy-label">{text.strategyLanguage(language)}</span>
             <select aria-label={text.languageLabel} value={language} disabled={loading}
-              onChange={event => setLanguage(event.target.value as StrategyLanguage)}>
+              onChange={event => {
+                setLanguage(event.target.value as StrategyLanguage);
+                setScriptError(undefined);
+              }}>
               {languages.map(item => <option key={item} value={item}>{text.languages[item]}</option>)}
             </select>
           </div>
+          <div className="strategy-language">
+            <label htmlFor="movement">{text.movementLabel}</label>
+            <select id="movement" value={movement} disabled={loading}
+              onChange={event => {
+                setMovement(event.target.value as Movement);
+                setScriptError(undefined);
+              }}>
+              {modelOptions}
+            </select>
+          </div>
+          <details className="movement-help">
+            <summary>{text.movementHelpTitle}</summary>
+            <p>{text.movementDescriptions[movement]}</p>
+          </details>
           <Suspense fallback={<div className="code-editor" />}>
-            <StrategyEditor key={language} language={language} initialCode={code} onChange={updateCode} />
+            <StrategyEditor key={`${movement}-${language}`} language={language} initialCode={code} onChange={updateCode} />
           </Suspense>
           {error && <p role="alert" className="error-card">{error}</p>}
           {scriptError && (
             <div role="alert" className="error-card">
               <div className="error-heading">
                 <strong>{text.diagnostic.title}</strong>
-                <span>{botLabel(scriptError.botId)}</span>
+                <span>{text.botLabel(scriptError.botId, opponentCount > 1)}</span>
               </div>
               <p>{scriptError.line == null ? scriptError.message :
                 scriptError.tick == null ? text.diagnostic.load : text.diagnostic.tickFailure}</p>
@@ -160,13 +275,35 @@ function App() {
               </dl>
             </div>
           )}
-          <StrategyHelp language={language} />
-          <label htmlFor="opponent">{text.opponent}</label>
-          <select id="opponent" value={opponentId} onChange={event => setOpponentId(event.target.value)}>
-            {opponents.map(item => <option key={item.id} value={item.id}>{opponentText(item).name}</option>)}
-          </select>
-          {opponent && <p className="muted">{opponentText(opponent).description}</p>}
-          <button className="primary" disabled={loading || !opponentId || !code.trim() || code.length > 16384}>
+          <StrategyHelp language={language} movement={movement} />
+          <div className="strategy-language">
+            <label htmlFor="match-format">{text.matchFormat}</label>
+            <select id="match-format" value={opponentCount} disabled={loading}
+              onChange={event => {
+                setOpponentCount(Number(event.target.value));
+                setScriptError(undefined);
+              }}>
+              <option value="1">{text.duelFormat}</option>
+              {[2, 3].map(count => <option key={count} value={count}>{text.freeForAll(count + 1)}</option>)}
+            </select>
+          </div>
+          {participants.map((slot, i) => {
+            const label = text.botLabel(i === 0 ? 'opponent' : `opponent-${i + 1}`, opponentCount > 1);
+            return (
+              <fieldset key={i} className="opponent-slot" disabled={loading}>
+                <legend>{label}</legend>
+                <select id={i === 0 ? 'opponent' : `opponent-${i + 1}`} aria-label={`${label} · ${text.strategy}`}
+                  value={slot.id} onChange={event => updateSlot(i, { id: event.target.value })}>
+                  {opponents.map(item => <option key={item.id} value={item.id}>{opponentText(item).name}</option>)}
+                </select>
+                <select aria-label={`${label} · ${text.movementLabel}`} value={slot.movement}
+                  onChange={event => updateSlot(i, { movement: event.target.value as Movement })}>
+                  {modelOptions}
+                </select>
+              </fieldset>
+            );
+          })}
+          <button className="primary" disabled={loading || participants.length !== opponentCount || participants.some(slot => !slot.id) || !code.trim() || code.length > 16384}>
             {loading ? text.working : text.start}
           </button>
           {code.length > 16384 && <p role="alert" className="error">{text.strategyTooLong}</p>}

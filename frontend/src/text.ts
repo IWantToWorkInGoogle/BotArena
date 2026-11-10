@@ -6,15 +6,34 @@ export const text = {
   language: 'ru',
   title: 'BotArena · Match Lab',
   brand: '● BotArena',
-  mode: 'Match Lab / дуэль 1×1',
+  mode: 'Match Lab',
+  matchFormat: 'Участники',
+  duelFormat: 'Дуэль · 2 робота',
+  freeForAll: (count: number) => `Каждый за себя · ${count} робота`,
+  botLabel: (id: string, multiple: boolean) => {
+    if (id === 'player') return 'Ваш бот';
+    if (id === 'opponent') return multiple ? 'Противник 1' : 'Противник';
+    return /^opponent-\d+$/.test(id) ? `Противник ${id.slice(9)}` : id;
+  },
   strategy: 'Стратегия бота',
   languageLabel: 'Язык стратегии',
   languages,
   strategyLanguage: (language: StrategyLanguage) => `${languages[language]} · tick(state)`,
+  movementLabel: 'Модель движения',
+  movements: { tracked: 'Танк', hover: 'Воздушная подушка', wheeled: 'Колёсное шасси', omni: 'Омни-шасси' },
+  movementHelpTitle: 'Как движется это шасси',
+  movementDescriptions: {
+    tracked: 'Две гусеницы управляются отдельно. Одинаковая тяга ведёт по прямой, а тяга в разные стороны позволяет развернуться на месте. В режиме «План» видно, как танк сначала поворачивает корпус, а затем едет в новом направлении.',
+    hover: 'Воздушная подушка может двигаться боком и поворачивать корпус независимо от траектории. В готовом примере робот разворачивается на ходу и продолжает скользить. Чтобы остановиться быстрее, дай тягу против скорости.',
+    wheeled: 'Руль поворачивает корпус только в движении. В режиме «План» видно, как готовый пример описывает дугу. При движении задним ходом та же команда руля разворачивает корпус в обратную сторону.',
+    omni: 'В режиме «План» видно, как робот едет боком, пока стрелка корпуса смотрит вперёд. Обычным колёсам для этого пришлось бы повернуть. При нулевой тяге омни-шасси тормозит, а воздушная подушка продолжает скользить.',
+  },
+  omniBrakeComment: 'Отпускаем тягу. Омни-шасси само тормозит.',
+  hoverExampleComment: 'Разгон вверх, поворот корпуса в скольжении, затем торможение.',
   strategyComment: 'Пока цель скрыта, объезжаем стену сверху.',
   opponent: 'Противник',
   opponents: {
-    aggressive: { name: 'Штурмовик', description: 'Сближается и атакует.' },
+    aggressive: { name: 'Штурмовик', description: 'Обходит укрытия и сближается с целью.' },
     defensive: { name: 'Дозорный', description: 'Меняет позицию за укрытием и стреляет при удобном угле.' },
   },
   strategyTooLong: 'Стратегия должна содержать не больше 16 384 символов.',
@@ -48,7 +67,9 @@ export const text = {
     speed: 'Скорость реплея',
     speedOption: (speed: number) => `${speed}×`,
     time: (position: number, duration: number) => `${position.toFixed(1)} / ${duration.toFixed(1)} с`,
-    health: 'Здоровье танков',
+    health: 'Здоровье роботов',
+    forfeited: 'Выбыл по ошибке',
+    allDestroyed: 'все роботы выбыли',
     hp: (hp: number, maxHp: number) => `${hp} / ${maxHp} HP`,
     draw: 'Ничья',
     winner: (bot: string) => `Победитель — ${bot.toLowerCase()}`,
@@ -69,18 +90,34 @@ export const text = {
     turretPythonImport: 'В Python сначала добавьте import botarena as bot.',
     inputFields: [
       ['tick', 'number', 'Номер тика. Первый вызов получает 0.'],
-      ['self', 'Bot', 'Состояние вашего танка.'],
-      ['enemy', 'Bot | null', 'Состояние противника. Если между танками есть стена, приходит null.'],
-      ['bullets', 'Bullet[]', 'Активные снаряды обоих танков.'],
+      ['self', 'Bot', 'Состояние вашего робота.'],
+      ['enemy', 'Bot | null', 'Ближайший видимый противник. Если цели нет, приходит null.'],
+      ['enemies', 'Bot[]', 'Все видимые действующие противники.'],
+      ['bullets', 'Bullet[]', 'Активные снаряды всех участников.'],
       ['arena', 'Arena', 'Размеры арены и координаты стен.'],
     ],
-    outputFields: [
+    trackedFields: [
       ['leftTrack?', 'number', 'Тяга левой гусеницы от −1 до 1. По умолчанию 0.'],
       ['rightTrack?', 'number', 'Тяга правой гусеницы от −1 до 1. По умолчанию 0.'],
+    ],
+    sharedFields: [
       ['aim?', 'Aim', 'Готовая команда: bot.scan(), bot.aimAt(point) или bot.holdAim().'],
       ['aimDirection?', 'Vec2', 'Направление башни. Нулевой вектор сохраняет угол. Без любой команды башни угол также сохраняется.'],
       ['turretTurn?', 'number', 'Вращение башни: от −1 (против часовой стрелки) до 1 (по часовой). 0 плавно останавливает вращение. Нельзя сочетать с aimDirection или aim.'],
       ['shoot?', 'boolean', 'Попытка выстрела. По умолчанию false.'],
+    ],
+    hoverIntro: 'Пунктирный след в реплее показывает направление скорости. Поворот корпуса не меняет направление скольжения.',
+    hoverFields: [
+      ['thrust?', 'Vec2', 'Тяга в координатах арены. Длина вектора ограничена единицей. Нулевая тяга оставляет робота скользить.'],
+      ['turn?', 'number', 'Поворот корпуса от −1 до 1. По умолчанию 0.'],
+    ],
+    wheeledFields: [
+      ['throttle?', 'number', 'Газ или задний ход от −1 до 1. По умолчанию 0.'],
+      ['turn?', 'number', 'Положение руля от −1 до 1. На месте корпус не поворачивается.'],
+    ],
+    omniFields: [
+      ['thrust?', 'Vec2', 'Команда скорости в координатах арены. Нулевой вектор активно тормозит.'],
+      ['turn?', 'number', 'Независимый поворот корпуса от −1 до 1. По умолчанию 0.'],
     ],
     turretRows: [
       ['bot.scan(options?)', 'Aim', 'Круговое вращение. speed: от 0 (не включая) до 1, по умолчанию 0.5; direction: clockwise или counterclockwise, по умолчанию clockwise.'],
@@ -89,7 +126,7 @@ export const text = {
     ],
     nestedFields: [
       ['Vec2', '{ x: number, y: number }', 'X растёт вправо, Y вниз.'],
-      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
+      ['Bot', '{ id: string, position: Vec2, bodyAngle: number, turretAngle: number, speed: number, velocity: Vec2, movement: string, forfeited: boolean, hp: number, maxHp: number, reloadingTime: number, canShoot: boolean }', 'Углы в радианах, перезарядка в секундах. Отрицательная speed означает задний ход.'],
       ['Bullet', '{ id: number, ownerBotId: string, position: Vec2, direction: Vec2 }', 'Владелец, координаты и направление снаряда.'],
       ['Arena', '{ width: number, height: number, walls: Wall[] }', 'Размеры арены и прямоугольные препятствия.'],
       ['Wall', '{ x: number, y: number, width: number, height: number }', 'Координаты верхнего левого угла и размеры стены.'],

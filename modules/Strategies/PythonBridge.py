@@ -60,11 +60,22 @@ bot_api.holdAim = _hold_aim
 sys.modules["botarena"] = bot_api
 
 
+def read_vector(value, key):
+    vector = value.get(key, {"x": 0, "y": 0})
+    if not isinstance(vector, dict):
+        return None
+    x, y = vector.get("x"), vector.get("y")
+    return {"x": x, "y": y} if finite(x) and finite(y) else None
+
+
 def action_from(value):
     if not isinstance(value, dict):
         return None
     left = value.get("leftTrack", 0)
     right = value.get("rightTrack", 0)
+    body_turn = value.get("turn", 0)
+    throttle = value.get("throttle", 0)
+    thrust = read_vector(value, "thrust")
     aim = value.get("aimDirection", {"x": 0, "y": 0})
     turn = value.get("turretTurn")
     if "turretTurn" in value and ("aimDirection" in value or not finite(turn)):
@@ -72,14 +83,16 @@ def action_from(value):
     if "aim" in value and ("aimDirection" in value or "turretTurn" in value or not isinstance(value["aim"], dict)):
         return None
     shoot = value.get("shoot", False)
-    if not finite(left) or not finite(right) or not isinstance(aim, dict) or type(shoot) is not bool:
+    if not all(finite(item) for item in (left, right, body_turn, throttle)) or thrust is None or not isinstance(aim, dict) or type(shoot) is not bool:
         return None
     x, y = aim.get("x"), aim.get("y")
     if not finite(x) or not finite(y):
         return None
     result = {"leftTrack": min(1, max(-1, left)), "rightTrack": min(1, max(-1, right)),
               "aimDirection": {"x": x, "y": y}, "shoot": shoot,
-              "turretTurn": None if turn is None else min(1, max(-1, turn))}
+              "turretTurn": None if turn is None else min(1, max(-1, turn)),
+              "thrust": thrust, "turn": min(1, max(-1, body_turn)),
+              "throttle": min(1, max(-1, throttle))}
     if "aim" in value:
         result["aim"] = value["aim"]
     return result

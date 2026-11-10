@@ -80,6 +80,8 @@ public sealed class PythonBot : IBotRuntime
         var action = StrategyAction.Decode(value, observation);
         if (!double.IsFinite(action.LeftTrack) || !double.IsFinite(action.RightTrack) ||
             !double.IsFinite(action.AimDirection.X) || !double.IsFinite(action.AimDirection.Y) ||
+            !double.IsFinite(action.Thrust.X) || !double.IsFinite(action.Thrust.Y) ||
+            !double.IsFinite(action.Turn) || !double.IsFinite(action.Throttle) ||
             (action.TurretTurn is { } turn && !double.IsFinite(turn)))
             throw new StrategyException("Некорректная команда Python.", observation.Tick);
         return action with

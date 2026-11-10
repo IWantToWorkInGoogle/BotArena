@@ -16,7 +16,10 @@ public record ArenaState(double Width, double Height, IReadOnlyList<Wall> Walls)
 public record BotState(string Id, Vec2 Position, double BodyAngle, double TurretAngle,
     double Speed, int Hp, int MaxHp, double ReloadingTime)
 {
-    public bool CanShoot => Hp > 0 && ReloadingTime <= 0;
+    public Vec2 Velocity { get; init; }
+    public string Movement { get; init; } = "tracked";
+    public bool Forfeited { get; init; }
+    public bool CanShoot => !Forfeited && Hp > 0 && ReloadingTime <= 0;
 }
 
 public record BulletState(int Id, string OwnerBotId, Vec2 Position, Vec2 Direction);
@@ -32,7 +35,12 @@ public record BotObservation(int Tick, BotState Self, BotState? Enemy, BulletSta
     public IReadOnlyList<BotState> Enemies { get; init; } = [];
 }
 public record BotAction(double LeftTrack, double RightTrack, Vec2 AimDirection, bool Shoot,
-    double? TurretTurn = null);
+    double? TurretTurn = null)
+{
+    public Vec2 Thrust { get; init; }
+    public double Turn { get; init; }
+    public double Throttle { get; init; }
+}
 [JsonConverter(typeof(JsonStringEnumConverter<MatchEndReason>))]
 public enum MatchEndReason { BotDestroyed, TimeLimit, BotError }
 

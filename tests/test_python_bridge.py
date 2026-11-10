@@ -66,5 +66,28 @@ class PythonTurretTests(unittest.TestCase):
                 self.assertIn("error", self.decide("{'aim': " + expression + "}"))
 
 
+    def test_chassis_and_turret_commands_are_independent(self):
+        for turret in ["'aim': bot.scan()", "'aim': bot.aimAt({'x': 10, 'y': 2})",
+                       "'aim': bot.holdAim()", "'turretTurn': -0.25"]:
+            with self.subTest(turret=turret):
+                action = self.decide("{'thrust': {'x': 0, 'y': 1}, 'turn': 0.6, 'throttle': 0.7, " + turret + "}")["action"]
+                self.assertEqual({"x": 0, "y": 1}, action["thrust"])
+                self.assertEqual(0.6, action["turn"])
+                self.assertEqual(0.7, action["throttle"])
+                if "turretTurn" in turret:
+                    self.assertEqual(-0.25, action["turretTurn"])
+                else:
+                    self.assertIn("aim", action)
+
+    def test_chassis_validation_and_clamping(self):
+        action = self.decide("{'turn': -2, 'throttle': 8, 'turretTurn': 0.5}")["action"]
+        self.assertEqual(-1, action["turn"])
+        self.assertEqual(1, action["throttle"])
+        self.assertEqual(0.5, action["turretTurn"])
+        for command in ["{'turn': True}", "{'throttle': '1'}", "{'thrust': {'x': 0, 'y': None}}"]:
+            with self.subTest(command=command):
+                self.assertIn("error", self.decide(command))
+
+
 if __name__ == "__main__":
     unittest.main()

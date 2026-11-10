@@ -38,6 +38,16 @@ public sealed class JavaScriptBot : IBotRuntime
                         isArray(action) || typeof action.then === 'function') return '';
                     const left = action.leftTrack;
                     const right = action.rightTrack;
+                    const readVector = value => {
+                        if (value === undefined) return { __proto__: null, x: 0, y: 0 };
+                        if (value === null || typeof value !== 'object' || isArray(value)) return null;
+                        const x = value.x;
+                        const y = value.y;
+                        return finite(x) && finite(y) ? { __proto__: null, x, y } : null;
+                    };
+                    const thrust = readVector(action.thrust);
+                    const bodyTurn = action.turn;
+                    const throttle = action.throttle;
                     const aim = action.aimDirection;
                     const turn = action.turretTurn;
                     const high = action.aim;
@@ -75,6 +85,8 @@ public sealed class JavaScriptBot : IBotRuntime
                     const y = aim === undefined ? 0 : aim.y;
                     const shoot = action.shoot;
                     if ((left !== undefined && !finite(left)) || (right !== undefined && !finite(right)) || !finite(x) || !finite(y) ||
+                        !thrust || (bodyTurn !== undefined && !finite(bodyTurn)) ||
+                        (throttle !== undefined && !finite(throttle)) ||
                         (shoot !== undefined && typeof shoot !== 'boolean')) return '';
                     return stringify({
                         __proto__: null,
@@ -83,6 +95,9 @@ public sealed class JavaScriptBot : IBotRuntime
                         aimDirection: { __proto__: null, x, y },
                         turretTurn: turn === undefined ? null : min(1, max(-1, turn)),
                         aim: highAim,
+                        thrust,
+                        turn: min(1, max(-1, bodyTurn ?? 0)),
+                        throttle: min(1, max(-1, throttle ?? 0)),
                         shoot: shoot === true
                     });
                 })(JSON.parse, JSON.stringify, Number.isFinite, Array.isArray, Math.min, Math.max, Object.keys)
@@ -111,7 +126,7 @@ public sealed class JavaScriptBot : IBotRuntime
             if (output.Length == 0)
             {
                 throw new StrategyException(
-                    "tick(state) должна вернуть объект команды: числовые leftTrack, rightTrack, логический shoot и только один способ управления башней — aim, aimDirection { x, y } или числовой turretTurn.", observation.Tick);
+                    "tick(state) должна вернуть объект команды: числовые leftTrack, rightTrack, throttle и turn, вектор thrust, логический shoot и только один способ управления башней — aim, aimDirection { x, y } или числовой turretTurn.", observation.Tick);
             }
             using var document = JsonDocument.Parse(output);
             return StrategyAction.Decode(document.RootElement, observation);

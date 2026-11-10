@@ -1,9 +1,13 @@
 export interface Point { x: number; y: number }
 export interface Wall extends Point { width: number; height: number }
 export interface Arena { width: number; height: number; walls: Wall[] }
+export type Movement = 'tracked' | 'hover' | 'wheeled' | 'omni';
 export interface Bot {
   id: string;
   position: Point;
+  movement?: Movement;
+  velocity?: Point;
+  forfeited?: boolean;
   hp: number;
   maxHp: number;
   bodyAngle: number;
@@ -13,6 +17,24 @@ export interface Bot {
   canShoot: boolean;
 }
 export interface Bullet { id: number; ownerBotId: Bot['id']; position: Point; direction: Point }
+export interface BotAction {
+  leftTrack: number;
+  rightTrack: number;
+  aimDirection: Point;
+  shoot: boolean;
+  thrust?: Point;
+  turn?: number;
+  throttle?: number;
+}
+export interface BehaviorSample {
+  tick: number;
+  botId: Bot['id'];
+  position: Point;
+  bodyAngle: number;
+  turretAngle: number;
+  enemyVisible: boolean;
+  action: BotAction;
+}
 export interface BattleEvent {
   tick: number;
   type: 'ShotFired' | 'BotHit' | 'BotDestroyed' | 'MatchFinished';
@@ -28,6 +50,7 @@ export interface Replay {
   arena: Arena;
   result: { winnerBotId: Bot['id'] | null; reason: 'BotDestroyed' | 'TimeLimit' | 'BotError'; durationTicks: number };
   frames: Frame[];
+  behaviorSamples?: BehaviorSample[];
 }
 export interface ScriptError {
   botId: Bot['id'];
@@ -41,6 +64,7 @@ export interface MatchResponse {
   replay: Replay;
   error: ScriptError | null;
 }
+export interface OpponentSlot { id: string; movement: Movement }
 export interface Opponent { id: string; name: string; description: string }
 
 export type MatchJobStatus =
