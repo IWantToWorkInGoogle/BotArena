@@ -179,6 +179,17 @@ function createTank(color: number, movement?: Bot['movement']): TankRig {
     }
   }
 
+  if (omni) {
+    const headingGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0.26, 0.34, -0.11),
+      new THREE.Vector3(0.43, 0.34, 0),
+      new THREE.Vector3(0.26, 0.34, 0.11),
+    ]);
+    const headingMaterial = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1 });
+    hull.add(new THREE.Line(headingGeometry, headingMaterial));
+    materials.push(headingMaterial);
+  }
+
   const turretGeometry = new THREE.CylinderGeometry(0.19, 0.22, 0.16, 10);
   const turretSurface = new THREE.MeshStandardMaterial({
     color,

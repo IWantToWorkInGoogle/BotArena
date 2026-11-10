@@ -21,6 +21,8 @@ export const text = {
   strategyLanguage: (language: StrategyLanguage) => `${languages[language]} · tick(state)`,
   movementLabel: 'Модель движения',
   movements: { tracked: 'Танк', hover: 'Воздушная подушка', wheeled: 'Колёсное шасси', omni: 'Омни-шасси' },
+  omniDescription: 'В режиме «План» видно, как робот едет боком, пока стрелка корпуса смотрит вперёд. Обычным колёсам для этого пришлось бы повернуть. При нулевой тяге омни-шасси тормозит, а воздушная подушка продолжает скользить.',
+  omniBrakeComment: 'Отпускаем тягу. Омни-шасси само тормозит.',
   hoverExampleComment: 'Разгон вверх, поворот корпуса в скольжении, затем торможение.',
   strategyComment: 'Пока цель скрыта, объезжаем стену сверху.',
   opponent: 'Противник',

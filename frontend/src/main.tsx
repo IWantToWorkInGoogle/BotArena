@@ -109,21 +109,33 @@ const wheeledExamples = {
 
 const omniExamples = {
   javascript: `function tick({ tick, self, enemy }) {
-  const thrust = tick < 10 ? { x: 0, y: -1 } : tick < 22 ? { x: 1, y: 0 } : { x: 0, y: 0 };
-  if (!enemy) return { thrust };
-  return { thrust, aimDirection: { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y },
-    shoot: self.canShoot };
+  if (tick < 18) return { thrust: { x: 0, y: -1 } };
+  if (tick < 30) return {}; // ${text.omniBrakeComment}
+  if (tick < 46) return { thrust: { x: 0, y: 1 } };
+  if (!enemy) return {};
+  return {
+    aimDirection: { x: enemy.position.x - self.position.x, y: enemy.position.y - self.position.y },
+    shoot: self.canShoot,
+  };
 }`,
   python: `def tick(state):
     tick = state["tick"]
-    action = {"thrust": {"x": int(10 <= tick < 22), "y": -int(tick < 10)}}
+    if tick < 18:
+        return {"thrust": {"x": 0, "y": -1}}
+    if tick < 30:
+        return {}  # ${text.omniBrakeComment}
+    if tick < 46:
+        return {"thrust": {"x": 0, "y": 1}}
+
+    self = state["self"]
     enemy = state["enemy"]
-    if enemy is not None:
-        position = state["self"]["position"]
-        action["aimDirection"] = {"x": enemy["position"]["x"] - position["x"],
-                                  "y": enemy["position"]["y"] - position["y"]}
-        action["shoot"] = state["self"]["canShoot"]
-    return action
+    if enemy is None:
+        return {}
+    return {
+        "aimDirection": {"x": enemy["position"]["x"] - self["position"]["x"],
+                         "y": enemy["position"]["y"] - self["position"]["y"]},
+        "shoot": self["canShoot"],
+    }
 `,
 };
 
@@ -233,6 +245,7 @@ function App() {
           <div className="strategy-language">
             <label htmlFor="movement">{text.movementLabel}</label>
             <select id="movement" value={movement} disabled={loading}
+              aria-describedby={movement === 'omni' ? 'movement-description' : undefined}
               onChange={event => {
                 setMovement(event.target.value as Movement);
                 setScriptError(undefined);
@@ -240,6 +253,7 @@ function App() {
               {modelOptions}
             </select>
           </div>
+          {movement === 'omni' && <p className="muted" id="movement-description">{text.omniDescription}</p>}
           <Suspense fallback={<div className="code-editor" />}>
             <StrategyEditor key={`${movement}-${language}`} language={language} initialCode={code} onChange={updateCode} />
           </Suspense>
